@@ -16,5 +16,4 @@ use shared::components::minigame::arc::ArcState;
 /// Requires both `ArcState` (for current streak, to shade unavailable paths)
 /// and `DagState` (for flow position and collected modifiers).
 pub fn render_dag(query: Query<(&DagState, &ArcState)>) {
-    todo!()
 }

@@ -13,5 +13,4 @@ use shared::components::minigame::value_lock::ValueLockState;
 /// - Entrainment streak counter.
 /// - Target frequency readout and its decay progress.
 pub fn render_value_lock(query: Query<&ValueLockState>) {
-    todo!()
 }

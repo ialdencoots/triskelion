@@ -17,5 +17,4 @@ use shared::components::minigame::bar_fill::BarFillState;
 /// Reads both `WaveInterferenceState` and `BarFillState` since pool level
 /// affects spending decisions the player may want to see together.
 pub fn render_wave_interference(query: Query<(&WaveInterferenceState, &BarFillState)>) {
-    todo!()
 }

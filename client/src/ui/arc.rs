@@ -24,5 +24,4 @@ pub const MAX_GHOST_ENTRIES: usize = 6;
 /// - The ghost arc history stack below the live arc.
 /// - Lockout indicator.
 pub fn render_arc(query: Query<(&ArcState, Option<&GhostArcHistory>)>) {
-    todo!()
 }

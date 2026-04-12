@@ -17,5 +17,4 @@ use shared::components::minigame::value_lock::ValueLockState;
 /// Reads both `HeartbeatState` and `ValueLockState` so the player can see
 /// the target frequency decay and entrainment streak alongside the live beat.
 pub fn render_heartbeat(query: Query<(&HeartbeatState, &ValueLockState)>) {
-    todo!()
 }

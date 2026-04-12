@@ -12,13 +12,10 @@ use shared::inputs::PlayerInput;
 /// Minigame mechanic inputs (commit, branch, hold) are processed separately
 /// in the minigame tick systems.
 pub fn process_player_inputs(
-    mut input_receivers: Query<&mut MessageReceiver<PlayerInput>>,
-    mut players: Query<(&PlayerId, &mut CombatState, &mut AbilityCooldowns, &mut Transform)>,
+    input_receivers: Query<&mut MessageReceiver<PlayerInput>>,
+    players: Query<(&PlayerId, &mut CombatState, &mut AbilityCooldowns, &mut Transform)>,
 ) {
-    todo!()
 }
 
 /// Decrement all ability cooldowns by the elapsed fixed-timestep delta.
-pub fn tick_ability_cooldowns(time: Res<Time>, mut query: Query<&mut AbilityCooldowns>) {
-    todo!()
-}
+pub fn tick_ability_cooldowns(time: Res<Time>, mut query: Query<&mut AbilityCooldowns>) {}

@@ -12,5 +12,4 @@ use shared::components::minigame::bar_fill::BarFillState;
 /// - The Arcane Pool meter (0–500%).
 /// - Visual cue when fill is near a bonus marker's position (±delta).
 pub fn render_bar_fill(query: Query<&BarFillState>) {
-    todo!()
 }

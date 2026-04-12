@@ -16,5 +16,4 @@ pub fn gather_and_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
 ) {
-    todo!()
 }
