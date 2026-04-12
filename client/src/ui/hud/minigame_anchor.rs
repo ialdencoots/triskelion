@@ -5,8 +5,8 @@ use crate::world::terrain::PlayerMarker;
 
 const MINIGAME_W: f32 = 420.0;
 const MINIGAME_H: f32 = 180.0;
-/// Vertical offset below the character's screen-space feet.
-const BELOW_OFFSET: f32 = 80.0;
+/// Distance above the action bar (slot height 64 + bottom pad 18 + gap 10).
+const ABOVE_ACTION_BAR: f32 = 64.0 + 18.0 + 10.0;
 
 #[derive(Component)]
 pub struct MinigameRoot;
@@ -24,11 +24,9 @@ pub fn anchor_minigame_to_character(
     let Ok(screen) = camera.world_to_viewport(cam_tf, player_tf.translation()) else { return };
 
     let left = screen.x - MINIGAME_W / 2.0;
-    let top = screen.y + BELOW_OFFSET;
 
     if let Ok((_entity, mut node)) = root_query.single_mut() {
         node.left = Val::Px(left);
-        node.top = Val::Px(top);
     } else {
         // First time we have a valid screen position — spawn the container.
         commands.spawn((
@@ -36,7 +34,7 @@ pub fn anchor_minigame_to_character(
             Node {
                 position_type: PositionType::Absolute,
                 left: Val::Px(left),
-                top: Val::Px(top),
+                bottom: Val::Px(ABOVE_ACTION_BAR),
                 width: Val::Px(MINIGAME_W),
                 height: Val::Px(MINIGAME_H),
                 flex_direction: FlexDirection::Column,

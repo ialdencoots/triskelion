@@ -6,7 +6,7 @@ use crate::world::terrain::PlayerMarker;
 const FRAME_W: f32 = 220.0;
 const FRAME_H: f32 = 56.0;
 const AVATAR_SIZE: f32 = 48.0;
-const CHAR_OFFSET: f32 = 14.0; // px gap between frame edge and character screen center
+const CHAR_OFFSET: f32 = 80.0; // px gap between frame edge and character screen center
 
 // ── Marker components ───────────────────────────────────────────────────────
 
