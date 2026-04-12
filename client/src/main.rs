@@ -6,6 +6,7 @@ use lightyear::prelude::client::ClientPlugins;
 mod plugin;
 mod systems;
 mod ui;
+mod world;
 
 fn main() {
     App::new()

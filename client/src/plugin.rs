@@ -6,11 +6,14 @@ use shared::settings;
 
 use crate::systems::input;
 use crate::ui;
+use crate::ui::hud::HudPlugin;
+use crate::world::WorldPlugin;
 
 pub struct ClientGamePlugin;
 
 impl Plugin for ClientGamePlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins((WorldPlugin, HudPlugin));
         app.add_systems(Startup, connect_to_server);
 
         // Gather local input every frame and send to server.
