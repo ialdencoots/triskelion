@@ -1,0 +1,21 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "client"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true }
+lightyear = { workspace = true, features = [
+    "client",
+    "udp",
+    "netcode",
+    "replication",
+    "prediction",
+    "interpolation",
+] }
+shared = { path = "../shared" }
+serde = { workspace = true }
