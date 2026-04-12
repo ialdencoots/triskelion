@@ -13,6 +13,7 @@ impl Plugin for HudPlugin {
             Update,
             (
                 frames::anchor_frames_to_character,
+                frames::update_target_frame_visibility,
                 minigame_anchor::anchor_minigame_to_character,
             ),
         );

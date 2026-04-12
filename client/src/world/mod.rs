@@ -6,7 +6,11 @@ use bevy_tnua_avian3d::*;
 
 pub mod camera;
 pub mod controller;
+pub mod enemies;
+pub mod selection;
 pub mod terrain;
+
+pub use selection::SelectedTarget;
 
 #[derive(TnuaScheme)]
 #[scheme(basis = TnuaBuiltinWalk)]
@@ -25,15 +29,25 @@ impl Plugin for WorldPlugin {
         ));
 
         app.init_resource::<camera::OrbitState>();
+        app.init_resource::<SelectedTarget>();
 
         app.add_systems(
             Startup,
-            (terrain::spawn_terrain, terrain::spawn_player, terrain::spawn_light),
+            (
+                terrain::spawn_terrain,
+                terrain::spawn_player,
+                terrain::spawn_light,
+                enemies::spawn_enemies,
+            ),
         );
 
         app.add_systems(
             Update,
-            (controller::handle_input, camera::update_orbit_camera),
+            (
+                controller::handle_input,
+                camera::update_orbit_camera,
+                selection::select_on_click,
+            ),
         );
     }
 }
