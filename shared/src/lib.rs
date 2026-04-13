@@ -19,7 +19,7 @@ impl Plugin for SharedPlugin {
         use channels::{GameChannel, PositionChannel};
         use components::{
             combat::{AbilityCooldowns, CombatState, Health},
-            enemy::{EnemyMarker, EnemyPosition},
+            enemy::{EnemyMarker, EnemyName, EnemyPosition},
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
@@ -81,6 +81,11 @@ impl Plugin for SharedPlugin {
 
         // ── Components: enemies ───────────────────────────────────────────────
         app.register_component::<EnemyMarker>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
+        app.register_component::<EnemyName>()
             .with_replication_config(ComponentReplicationConfig {
                 replicate_once: true,
                 ..default()

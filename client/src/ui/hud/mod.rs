@@ -22,6 +22,7 @@ impl Plugin for HudPlugin {
             Update,
             (
                 frames::update_target_frame_visibility,
+                frames::update_target_name,
                 enemy_bars::update_enemy_bars,
             ),
         );

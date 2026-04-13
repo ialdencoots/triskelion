@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use shared::components::enemy::EnemyName;
+
 use crate::world::selection::SelectedTarget;
 
 const FRAME_W: f32 = 220.0;
@@ -23,19 +25,23 @@ pub struct TargetFrameRoot;
 #[derive(Component)]
 pub struct HealthFill;
 
+/// Marker for the name text inside the target frame so it can be updated at runtime.
+#[derive(Component)]
+pub struct TargetNameText;
+
 // ── Spawn ────────────────────────────────────────────────────────────────────
 
 pub fn spawn_frames(mut commands: Commands) {
     // Player frame: left side of screen center, horizontally offset by CHAR_OFFSET + FRAME_W.
     commands.spawn((PlayerFrameRoot, frame_node(-(FRAME_W + CHAR_OFFSET)), Visibility::Inherited))
         .with_children(|p| {
-            spawn_frame_contents(p, Color::srgb(0.25, 0.55, 0.25), "Player");
+            spawn_frame_contents(p, Color::srgb(0.25, 0.55, 0.25), "Player", false);
         });
 
     // Target frame: right side of screen center, offset by CHAR_OFFSET.
     commands.spawn((TargetFrameRoot, frame_node(CHAR_OFFSET), Visibility::Hidden))
         .with_children(|p| {
-            spawn_frame_contents(p, Color::srgb(0.65, 0.20, 0.20), "");
+            spawn_frame_contents(p, Color::srgb(0.65, 0.20, 0.20), "", true);
         });
 }
 
@@ -58,7 +64,7 @@ fn frame_node(margin_left_px: f32) -> impl Bundle {
     }
 }
 
-fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str) {
+fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str, name_is_target: bool) {
     // Avatar square
     parent.spawn((
         Node {
@@ -94,11 +100,14 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
             },
         ))
         .with_children(|col| {
-            col.spawn((
+            let mut text_cmd = col.spawn((
                 Text::new(name),
                 TextFont { font_size: 11.0, ..default() },
                 TextColor(Color::srgb(0.85, 0.85, 0.85)),
             ));
+            if name_is_target {
+                text_cmd.insert(TargetNameText);
+            }
 
             col.spawn((
                 Node {
@@ -124,6 +133,22 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────────
+
+/// Updates the name text inside the target frame when the selection changes.
+pub fn update_target_name(
+    selected: Res<SelectedTarget>,
+    enemy_names: Query<&EnemyName>,
+    mut name_text_q: Query<&mut Text, With<TargetNameText>>,
+) {
+    if !selected.is_changed() {
+        return;
+    }
+    let Ok(mut text) = name_text_q.single_mut() else { return };
+    text.0 = match selected.0 {
+        Some(e) => enemy_names.get(e).map(|n| n.0.clone()).unwrap_or_default(),
+        None => String::new(),
+    };
+}
 
 /// Shows the target frame when an enemy is selected; hides it otherwise.
 pub fn update_target_frame_visibility(

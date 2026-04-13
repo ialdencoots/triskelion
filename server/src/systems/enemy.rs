@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 use lightyear::prelude::server::*;
 
-use shared::components::enemy::{EnemyMarker, EnemyPosition};
+use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition};
 use shared::terrain;
 
 /// Server-only AI state.  Never replicated.
@@ -26,11 +26,13 @@ pub fn on_server_started(
         return;
     }
     info!("[SERVER] on_server_started: Started on NetcodeServer {entity:?} — spawning enemies");
+    const NAMES: &[&str] = &["Goblin", "Orc", "Troll"];
     for (i, (x, z)) in [(5.0_f32, -4.0_f32), (-8.0, 6.0), (12.0, 3.0)].iter().enumerate() {
         let y = terrain::height_at(*x, *z) + 1.1;
         let enemy = commands.spawn((
             Name::new(format!("Enemy{}", i + 1)),
             EnemyMarker,
+            EnemyName(NAMES[i].to_string()),
             EnemyPosition::new(*x, y, *z),
             EnemyWalkState { phase: i as f32 * 2.1 },
             Replicate::to_clients(NetworkTarget::All),

@@ -6,6 +6,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnemyMarker;
 
+/// Display name for an enemy, replicated once at spawn.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq)]
+pub struct EnemyName(pub String);
+
 /// World-space position of an enemy, replicated every tick.
 ///
 /// Using individual floats avoids needing bevy's `serialize` feature flag
