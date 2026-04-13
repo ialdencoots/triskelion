@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 use lightyear::prelude::server::*;
 
-use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition};
+use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity};
 use shared::terrain;
 
 /// Server-only AI state.  Never replicated.
@@ -34,6 +34,7 @@ pub fn on_server_started(
             EnemyMarker,
             EnemyName(NAMES[i].to_string()),
             EnemyPosition::new(*x, y, *z),
+            EnemyVelocity { vx: 0.0, vz: 0.0 },
             EnemyWalkState { phase: i as f32 * 2.1 },
             Replicate::to_clients(NetworkTarget::All),
         )).id();
@@ -41,7 +42,7 @@ pub fn on_server_started(
     }
 }
 
-pub fn tick_enemy_walk(time: Res<Time>, mut query: Query<(&mut EnemyPosition, &EnemyWalkState)>) {
+pub fn tick_enemy_walk(time: Res<Time>, mut query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &EnemyWalkState)>) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
 
@@ -54,15 +55,18 @@ pub fn tick_enemy_walk(time: Res<Time>, mut query: Query<(&mut EnemyPosition, &E
     }
     const SPEED: f32 = 2.5;
 
-    for (mut pos, walk) in query.iter_mut() {
+    for (mut pos, mut vel, walk) in query.iter_mut() {
         // Lissajous-style wandering: two sine waves at different frequencies
         // give a natural, looping path unique to each enemy's phase offset.
         let dx = (t * 0.4 + walk.phase).sin();
         let dz = (t * 0.3 + walk.phase * 1.7).cos();
         let dir = Vec2::new(dx, dz).normalize_or_zero();
 
-        pos.x += dir.x * SPEED * dt;
-        pos.z += dir.y * SPEED * dt;
+        vel.vx = dir.x * SPEED;
+        vel.vz = dir.y * SPEED;
+
+        pos.x += vel.vx * dt;
+        pos.z += vel.vz * dt;
         pos.y = terrain::height_at(pos.x, pos.z) + 1.1;
     }
 }

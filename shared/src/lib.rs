@@ -19,7 +19,7 @@ impl Plugin for SharedPlugin {
         use channels::{GameChannel, PositionChannel};
         use components::{
             combat::{AbilityCooldowns, CombatState, Health},
-            enemy::{EnemyMarker, EnemyName, EnemyPosition},
+            enemy::{EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity},
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
@@ -91,6 +91,7 @@ impl Plugin for SharedPlugin {
                 ..default()
             });
         app.register_component::<EnemyPosition>();
+        app.register_component::<EnemyVelocity>();
 
         // ── Components: combat state (changes during play) ────────────────────
         app.register_component::<Health>();

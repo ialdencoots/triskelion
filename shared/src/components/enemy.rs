@@ -36,3 +36,13 @@ impl From<Vec3> for EnemyPosition {
         Self { x: v.x, y: v.y, z: v.z }
     }
 }
+
+/// XZ velocity of an enemy, replicated every tick alongside EnemyPosition.
+///
+/// Clients use this for dead-reckoning: they extrapolate the enemy's position
+/// every frame between server updates instead of snapping.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq)]
+pub struct EnemyVelocity {
+    pub vx: f32,
+    pub vz: f32,
+}

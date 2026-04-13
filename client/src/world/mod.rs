@@ -52,8 +52,9 @@ impl Plugin for WorldPlugin {
                 camera::update_orbit_camera,
                 selection::select_on_click,
                 selection::tab_cycle_selection,
+                enemies::apply_server_corrections,
                 enemies::sync_enemy_positions,
-            ),
+            ).chain(),
         );
     }
 }
