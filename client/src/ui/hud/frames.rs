@@ -1,13 +1,15 @@
 use bevy::prelude::*;
 
-use crate::world::camera::OrbitCamera;
 use crate::world::selection::SelectedTarget;
-use crate::world::terrain::PlayerMarker;
 
 const FRAME_W: f32 = 220.0;
 const FRAME_H: f32 = 56.0;
 const AVATAR_SIZE: f32 = 48.0;
-const CHAR_OFFSET: f32 = 80.0; // px gap between frame edge and character screen center
+/// Horizontal gap from screen center to the near edge of each frame.
+const CHAR_OFFSET: f32 = 80.0;
+/// Vertical position: percentage of window height where the frame top sits.
+/// ~55 % places the frames slightly below center, near where the player appears.
+const FRAME_TOP_PCT: f32 = 55.0;
 
 // ── Marker components ───────────────────────────────────────────────────────
 
@@ -24,23 +26,27 @@ pub struct HealthFill;
 // ── Spawn ────────────────────────────────────────────────────────────────────
 
 pub fn spawn_frames(mut commands: Commands) {
-    commands.spawn((PlayerFrameRoot, frame_node(), Visibility::Inherited))
+    // Player frame: left side of screen center, horizontally offset by CHAR_OFFSET + FRAME_W.
+    commands.spawn((PlayerFrameRoot, frame_node(-(FRAME_W + CHAR_OFFSET)), Visibility::Inherited))
         .with_children(|p| {
             spawn_frame_contents(p, Color::srgb(0.25, 0.55, 0.25), "Player");
         });
 
-    // Target frame starts hidden — shown only when an enemy is selected.
-    commands.spawn((TargetFrameRoot, frame_node(), Visibility::Hidden))
+    // Target frame: right side of screen center, offset by CHAR_OFFSET.
+    commands.spawn((TargetFrameRoot, frame_node(CHAR_OFFSET), Visibility::Hidden))
         .with_children(|p| {
             spawn_frame_contents(p, Color::srgb(0.65, 0.20, 0.20), "");
         });
 }
 
-fn frame_node() -> impl Bundle {
+/// Builds a frame node centered on screen.
+/// `margin_left_px` shifts the left edge relative to the horizontal midpoint.
+fn frame_node(margin_left_px: f32) -> impl Bundle {
     Node {
         position_type: PositionType::Absolute,
-        left: Val::Px(0.0),
-        top: Val::Px(0.0),
+        left: Val::Percent(50.0),
+        top: Val::Percent(FRAME_TOP_PCT),
+        margin: UiRect::left(Val::Px(margin_left_px)),
         width: Val::Px(FRAME_W),
         height: Val::Px(FRAME_H),
         flex_direction: FlexDirection::Row,
@@ -118,27 +124,6 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────────
-
-pub fn anchor_frames_to_character(
-    player_query: Query<&GlobalTransform, With<PlayerMarker>>,
-    camera_query: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
-    mut player_frame_q: Query<&mut Node, (With<PlayerFrameRoot>, Without<TargetFrameRoot>)>,
-    mut target_frame_q: Query<&mut Node, (With<TargetFrameRoot>, Without<PlayerFrameRoot>)>,
-) {
-    let Ok(player_tf) = player_query.single() else { return };
-    let Ok((camera, cam_tf)) = camera_query.single() else { return };
-    let Ok(screen) = camera.world_to_viewport(cam_tf, player_tf.translation()) else { return };
-
-    if let Ok(mut node) = player_frame_q.single_mut() {
-        node.left = Val::Px(screen.x - FRAME_W - CHAR_OFFSET);
-        node.top  = Val::Px(screen.y - FRAME_H / 2.0);
-    }
-
-    if let Ok(mut node) = target_frame_q.single_mut() {
-        node.left = Val::Px(screen.x + CHAR_OFFSET);
-        node.top  = Val::Px(screen.y - FRAME_H / 2.0);
-    }
-}
 
 /// Shows the target frame when an enemy is selected; hides it otherwise.
 pub fn update_target_frame_visibility(

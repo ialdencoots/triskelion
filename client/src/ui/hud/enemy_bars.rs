@@ -43,8 +43,8 @@ pub fn on_enemy_bar_added(trigger: On<Add, EnemyMarker>, mut commands: Commands)
         });
 }
 
-/// Each frame: positions each floating bar above its enemy's head and
-/// shows it only when that enemy is the current SelectedTarget.
+/// Each frame: projects each enemy to screen space and positions its bar above
+/// its head. Only the bar for the currently selected enemy is shown.
 pub fn update_enemy_bars(
     selected: Res<SelectedTarget>,
     enemy_query: Query<&Transform, With<EnemyMarker>>,
