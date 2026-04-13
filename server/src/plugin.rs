@@ -28,6 +28,9 @@ impl Plugin for ServerGamePlugin {
         app.add_systems(
             FixedUpdate,
             (
+                // Spawn requests must be processed before input so the
+                // PlayerEntityLink exists when process_player_inputs runs.
+                connection::process_spawn_requests,
                 enemy::tick_enemy_walk,
                 combat::process_player_inputs,
                 combat::tick_ability_cooldowns,

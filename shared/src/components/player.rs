@@ -81,6 +81,40 @@ pub enum Stance {
     Overgrowth,
 }
 
+// ── Position / Velocity ───────────────────────────────────────────────────────
+
+/// Server-authoritative world-space position, replicated every tick.
+/// Clients use this for dead-reckoning (same pattern as EnemyPosition).
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PlayerPosition {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl PlayerPosition {
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn to_vec3(&self) -> Vec3 {
+        Vec3::new(self.x, self.y, self.z)
+    }
+}
+
+impl From<Vec3> for PlayerPosition {
+    fn from(v: Vec3) -> Self {
+        Self { x: v.x, y: v.y, z: v.z }
+    }
+}
+
+/// XZ velocity replicated alongside PlayerPosition for client dead-reckoning.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct PlayerVelocity {
+    pub vx: f32,
+    pub vz: f32,
+}
+
 // ── Bundles ───────────────────────────────────────────────────────────────────
 
 /// Components shared by all player entities regardless of class.

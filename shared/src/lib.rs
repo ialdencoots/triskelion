@@ -24,7 +24,7 @@ impl Plugin for SharedPlugin {
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
             },
-            player::{PlayerClass, PlayerId, PlayerName, PlayerSubclass},
+            player::{PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
         };
         use messages::{PlayerDespawnedMsg, PlayerSpawnedMsg, RequestSpawnMsg};
 
@@ -92,6 +92,10 @@ impl Plugin for SharedPlugin {
             });
         app.register_component::<EnemyPosition>();
         app.register_component::<EnemyVelocity>();
+
+        // ── Components: player position/velocity (replicated every tick) ────────
+        app.register_component::<PlayerPosition>();
+        app.register_component::<PlayerVelocity>();
 
         // ── Components: combat state (changes during play) ────────────────────
         app.register_component::<Health>();

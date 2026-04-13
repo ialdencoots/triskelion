@@ -7,6 +7,7 @@ use bevy_tnua_avian3d::*;
 pub mod camera;
 pub mod controller;
 pub mod enemies;
+pub mod players;
 pub mod selection;
 pub mod terrain;
 
@@ -44,6 +45,8 @@ impl Plugin for WorldPlugin {
         app.add_observer(enemies::on_enemy_replicated);
         // Diagnostic: log when EnemyPosition arrives (even without EnemyMarker).
         app.add_observer(enemies::on_enemy_position_replicated);
+        // Observer: render remote player entities when PlayerId replicates.
+        app.add_observer(players::on_remote_player_replicated);
 
         app.add_systems(
             Update,
@@ -54,6 +57,9 @@ impl Plugin for WorldPlugin {
                 selection::tab_cycle_selection,
                 enemies::apply_server_corrections,
                 enemies::sync_enemy_positions,
+                players::apply_player_corrections,
+                players::sync_player_positions,
+                players::correct_local_player_position,
             ).chain(),
         );
     }
