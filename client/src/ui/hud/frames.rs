@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
+use shared::components::combat::Health;
 use shared::components::enemy::EnemyName;
+use shared::components::player::PlayerName;
 
 use crate::world::selection::SelectedTarget;
 
@@ -24,6 +26,11 @@ pub struct TargetFrameRoot;
 /// Marker for the green fill inside a health bar.
 #[derive(Component)]
 pub struct HealthFill;
+
+/// Marks specifically the health fill inside the *target* frame so its width
+/// can be driven by the selected entity's `Health` component.
+#[derive(Component)]
+pub struct TargetHealthFill;
 
 /// Marker for the name text inside the target frame so it can be updated at runtime.
 #[derive(Component)]
@@ -64,7 +71,7 @@ fn frame_node(margin_left_px: f32) -> impl Bundle {
     }
 }
 
-fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str, name_is_target: bool) {
+fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str, is_target: bool) {
     // Avatar square
     parent.spawn((
         Node {
@@ -105,7 +112,7 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                 TextFont { font_size: 11.0, ..default() },
                 TextColor(Color::srgb(0.85, 0.85, 0.85)),
             ));
-            if name_is_target {
+            if is_target {
                 text_cmd.insert(TargetNameText);
             }
 
@@ -119,7 +126,7 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                 BackgroundColor(Color::srgba(0.15, 0.05, 0.05, 0.8)),
             ))
             .with_children(|bar| {
-                bar.spawn((
+                let mut fill_cmd = bar.spawn((
                     HealthFill,
                     Node {
                         width: Val::Percent(100.0),
@@ -128,6 +135,9 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                     },
                     BackgroundColor(Color::srgb(0.20, 0.72, 0.20)),
                 ));
+                if is_target {
+                    fill_cmd.insert(TargetHealthFill);
+                }
             });
         });
 }
@@ -135,9 +145,11 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
 // ── Systems ───────────────────────────────────────────────────────────────────
 
 /// Updates the name text inside the target frame when the selection changes.
+/// Checks `EnemyName` first, then `PlayerName` as a fallback.
 pub fn update_target_name(
     selected: Res<SelectedTarget>,
     enemy_names: Query<&EnemyName>,
+    player_names: Query<&PlayerName>,
     mut name_text_q: Query<&mut Text, With<TargetNameText>>,
 ) {
     if !selected.is_changed() {
@@ -145,12 +157,20 @@ pub fn update_target_name(
     }
     let Ok(mut text) = name_text_q.single_mut() else { return };
     text.0 = match selected.0 {
-        Some(e) => enemy_names.get(e).map(|n| n.0.clone()).unwrap_or_default(),
+        Some(e) => {
+            if let Ok(n) = enemy_names.get(e) {
+                n.0.clone()
+            } else if let Ok(n) = player_names.get(e) {
+                n.0.clone()
+            } else {
+                String::new()
+            }
+        }
         None => String::new(),
     };
 }
 
-/// Shows the target frame when an enemy is selected; hides it otherwise.
+/// Shows the target frame when something is selected; hides it otherwise.
 pub fn update_target_frame_visibility(
     selected: Res<SelectedTarget>,
     mut target_frame_q: Query<&mut Visibility, With<TargetFrameRoot>>,
@@ -158,4 +178,24 @@ pub fn update_target_frame_visibility(
     if !selected.is_changed() { return; }
     let Ok(mut vis) = target_frame_q.single_mut() else { return };
     *vis = if selected.0.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+}
+
+/// Drives the target frame's health fill width from the selected entity's `Health`.
+/// Falls back to 100% when the entity has no `Health` (e.g. enemies without HP tracking).
+pub fn update_target_health_fill(
+    selected: Res<SelectedTarget>,
+    health_query: Query<&Health>,
+    mut fill_query: Query<&mut Node, With<TargetHealthFill>>,
+) {
+    let Ok(mut node) = fill_query.single_mut() else { return };
+
+    let pct = match selected.0 {
+        Some(e) => health_query
+            .get(e)
+            .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
+            .unwrap_or(100.0),
+        None => 100.0,
+    };
+
+    node.width = Val::Percent(pct);
 }

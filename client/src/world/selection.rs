@@ -2,6 +2,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::world::camera::OrbitCamera;
+use crate::world::players::RemotePlayerMarker;
 use crate::world::terrain::PlayerMarker;
 use shared::components::enemy::EnemyMarker;
 
@@ -14,6 +15,7 @@ pub fn select_on_click(
     camera_query: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     spatial_query: SpatialQuery,
     enemy_query: Query<(), With<EnemyMarker>>,
+    remote_player_query: Query<(), With<RemotePlayerMarker>>,
     mut selected: ResMut<SelectedTarget>,
 ) {
     // Only act on a plain left click — skip if right mouse is held (that's orbit/movement).
@@ -35,15 +37,16 @@ pub fn select_on_click(
     );
 
     selected.0 = hit
-        .filter(|h| enemy_query.contains(h.entity))
+        .filter(|h| enemy_query.contains(h.entity) || remote_player_query.contains(h.entity))
         .map(|h| h.entity);
 }
 
-/// Tab key cycles through enemies within range, sorted nearest-first.
+/// Tab key cycles through enemies and remote players within range, sorted nearest-first.
 pub fn tab_cycle_selection(
     keys: Res<ButtonInput<KeyCode>>,
     player_query: Query<&GlobalTransform, With<PlayerMarker>>,
     enemy_query: Query<(Entity, &Transform), With<EnemyMarker>>,
+    remote_player_query: Query<(Entity, &Transform), With<RemotePlayerMarker>>,
     mut selected: ResMut<SelectedTarget>,
 ) {
     if !keys.just_pressed(KeyCode::Tab) {
@@ -56,6 +59,7 @@ pub fn tab_cycle_selection(
 
     let mut nearby: Vec<(Entity, f32)> = enemy_query
         .iter()
+        .chain(remote_player_query.iter())
         .filter_map(|(e, tf)| {
             let dist = tf.translation.distance(player_pos);
             if dist <= RANGE { Some((e, dist)) } else { None }
