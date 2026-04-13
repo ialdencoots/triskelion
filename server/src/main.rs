@@ -14,7 +14,10 @@ fn main() {
             MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(
                 Duration::from_secs_f64(1.0 / shared::settings::FIXED_TIMESTEP_HZ),
             )),
-            LogPlugin::default(),
+            LogPlugin {
+                filter: "warn,server=info,lightyear_netcode=info".into(),
+                ..default()
+            },
             // Lightyear server networking stack.
             ServerPlugins {
                 tick_duration: Duration::from_secs_f64(

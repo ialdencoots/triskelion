@@ -5,6 +5,7 @@ pub mod components;
 pub mod inputs;
 pub mod messages;
 pub mod settings;
+pub mod terrain;
 
 use std::time::Duration;
 
@@ -18,6 +19,7 @@ impl Plugin for SharedPlugin {
         use channels::{GameChannel, PositionChannel};
         use components::{
             combat::{AbilityCooldowns, CombatState, Health},
+            enemy::{EnemyMarker, EnemyPosition},
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
@@ -76,6 +78,14 @@ impl Plugin for SharedPlugin {
                 replicate_once: true,
                 ..default()
             });
+
+        // ── Components: enemies ───────────────────────────────────────────────
+        app.register_component::<EnemyMarker>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
+        app.register_component::<EnemyPosition>();
 
         // ── Components: combat state (changes during play) ────────────────────
         app.register_component::<Health>();

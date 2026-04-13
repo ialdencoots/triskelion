@@ -11,3 +11,4 @@ lightyear = { workspace = true, features = [
     "interpolation",
 ] }
 serde = { workspace = true }
+fastnoise-lite = { workspace = true }

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use lightyear::prelude::client::ClientPlugins;
 
@@ -11,7 +12,10 @@ mod world;
 fn main() {
     App::new()
         .add_plugins((
-            DefaultPlugins,
+            DefaultPlugins.set(LogPlugin {
+                filter: "warn,client=info,lightyear_netcode=info".into(),
+                ..default()
+            }),
             // Lightyear client networking stack.
             ClientPlugins {
                 tick_duration: Duration::from_secs_f64(

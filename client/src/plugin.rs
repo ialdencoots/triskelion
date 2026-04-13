@@ -47,10 +47,14 @@ fn connect_to_server(mut commands: Commands) {
     let netcode_client = NetcodeClient::new(auth, NetcodeConfig::default())
         .expect("Failed to build netcode client");
 
-    commands.spawn((
+    let entity = commands.spawn((
         Name::new("GameClient"),
         netcode_client,
         UdpIo::default(),
         LocalAddr("0.0.0.0:0".parse().unwrap()),
-    ));
+        ReplicationReceiver::default(),
+    )).id();
+    // Trigger the Lightyear client startup chain, same pattern as the server's Start trigger.
+    commands.entity(entity).trigger(|e| Connect { entity: e });
+    info!("[CLIENT] Spawned NetcodeClient {entity:?}, triggering Connect");
 }

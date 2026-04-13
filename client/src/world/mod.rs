@@ -37,9 +37,13 @@ impl Plugin for WorldPlugin {
                 terrain::spawn_terrain,
                 terrain::spawn_player,
                 terrain::spawn_light,
-                enemies::spawn_enemies,
             ),
         );
+
+        // Observer: insert mesh/material whenever a server-replicated enemy arrives.
+        app.add_observer(enemies::on_enemy_replicated);
+        // Diagnostic: log when EnemyPosition arrives (even without EnemyMarker).
+        app.add_observer(enemies::on_enemy_position_replicated);
 
         app.add_systems(
             Update,
@@ -47,6 +51,8 @@ impl Plugin for WorldPlugin {
                 controller::handle_input,
                 camera::update_orbit_camera,
                 selection::select_on_click,
+                selection::tab_cycle_selection,
+                enemies::sync_enemy_positions,
             ),
         );
     }

@@ -4,16 +4,21 @@ use lightyear::prelude::server::*;
 
 use shared::settings;
 
-use crate::systems::{combat, connection, minigame};
+use crate::systems::{combat, connection, enemy, minigame};
 
 pub struct ServerGamePlugin;
 
 impl Plugin for ServerGamePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, start_listening);
+        app.add_observer(enemy::on_server_started);
+        app.add_observer(debug_server_linked);
+        app.add_observer(debug_server_started);
 
         // Handle new link-of connections (add replication/messaging components).
         app.add_observer(connection::on_link_of_added);
+        // Diagnostic: fires on the same trigger as Lightyear's handle_connection.
+        app.add_observer(connection::debug_connected_sender);
         // Handle full client connections (spawn player entity).
         app.add_observer(connection::on_client_connected);
         // Handle disconnections (despawn player entity).
@@ -23,6 +28,7 @@ impl Plugin for ServerGamePlugin {
         app.add_systems(
             FixedUpdate,
             (
+                enemy::tick_enemy_walk,
                 combat::process_player_inputs,
                 combat::tick_ability_cooldowns,
                 minigame::tick_arc_states,
@@ -36,16 +42,28 @@ impl Plugin for ServerGamePlugin {
     }
 }
 
+fn debug_server_linked(trigger: On<Add, Linked>) {
+    info!("[SERVER] Linked added to {:?} — UDP socket is bound", trigger.event_target());
+}
+
+fn debug_server_started(trigger: On<Add, Started>) {
+    info!("[SERVER] Started added to {:?} — server is fully up", trigger.event_target());
+}
+
 /// Spawns the server transport entity and begins listening for UDP connections.
 fn start_listening(mut commands: Commands) {
     let addr = settings::server_listen_addr();
-    commands.spawn((
+    let entity = commands.spawn((
         Name::new("GameServer"),
         NetcodeServer::new(
             NetcodeConfig::default().with_protocol_id(settings::PROTOCOL_ID),
         ),
         ServerUdpIo::default(),
         LocalAddr(addr),
-    ));
-    info!("Server listening on {addr}");
+    )).id();
+    info!("[SERVER] Spawned NetcodeServer entity {entity:?}, triggering Start on {addr}");
+    // Trigger the Lightyear startup chain: Start → LinkStart → Linked → Started.
+    // Enemies are spawned in an On<Add, Started> observer so Replicate finds
+    // an active server and fills per_sender_state immediately.
+    commands.entity(entity).trigger(|e| Start { entity: e });
 }
