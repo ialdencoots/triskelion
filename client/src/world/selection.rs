@@ -16,10 +16,17 @@ pub fn select_on_click(
     spatial_query: SpatialQuery,
     enemy_query: Query<(), With<EnemyMarker>>,
     remote_player_query: Query<(), With<RemotePlayerMarker>>,
+    ui_buttons: Query<&Interaction, With<Button>>,
     mut selected: ResMut<SelectedTarget>,
 ) {
     // Only act on a plain left click — skip if right mouse is held (that's orbit/movement).
     if !buttons.just_pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right) {
+        return;
+    }
+
+    // If the click landed on a UI button (e.g. a party-frame row), let that
+    // handler own the selection and don't also fire a world raycast.
+    if ui_buttons.iter().any(|i| *i == Interaction::Pressed) {
         return;
     }
 

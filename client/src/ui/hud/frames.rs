@@ -4,6 +4,7 @@ use shared::components::combat::Health;
 use shared::components::enemy::EnemyName;
 use shared::components::player::PlayerName;
 
+use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
 const FRAME_W: f32 = 220.0;
@@ -27,14 +28,23 @@ pub struct TargetFrameRoot;
 #[derive(Component)]
 pub struct HealthFill;
 
-/// Marks specifically the health fill inside the *target* frame so its width
-/// can be driven by the selected entity's `Health` component.
+/// Marks the health fill inside the *target* frame.
 #[derive(Component)]
 pub struct TargetHealthFill;
 
-/// Marker for the name text inside the target frame so it can be updated at runtime.
+/// Marks the name text inside the *target* frame.
 #[derive(Component)]
 pub struct TargetNameText;
+
+/// Marks the name text inside the *player* frame so it can be driven by the
+/// local player's actual `PlayerName`.
+#[derive(Component)]
+pub struct PlayerNameText;
+
+/// Marks the avatar background inside the *target* frame so its color can be
+/// updated to match the selected entity's group-frame avatar.
+#[derive(Component)]
+pub struct TargetAvatarBg;
 
 // ── Spawn ────────────────────────────────────────────────────────────────────
 
@@ -72,8 +82,9 @@ fn frame_node(margin_left_px: f32) -> impl Bundle {
 }
 
 fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str, is_target: bool) {
-    // Avatar square
-    parent.spawn((
+    // Avatar square — tagged with TargetAvatarBg on the target frame so the
+    // update system can recolor it to match the selected entity's group-frame avatar.
+    let mut avatar_cmd = parent.spawn((
         Node {
             width: Val::Px(AVATAR_SIZE),
             height: Val::Px(AVATAR_SIZE),
@@ -88,6 +99,9 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
             right:  Color::srgba(0.4, 0.4, 0.5, 0.6),
         },
     ));
+    if is_target {
+        avatar_cmd.insert(TargetAvatarBg);
+    }
 
     // Health bar column
     parent
@@ -114,6 +128,9 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
             ));
             if is_target {
                 text_cmd.insert(TargetNameText);
+            } else {
+                // Player frame — name is driven dynamically from PlayerName.
+                text_cmd.insert(PlayerNameText);
             }
 
             col.spawn((
@@ -143,6 +160,47 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
 }
 
 // ── Systems ───────────────────────────────────────────────────────────────────
+
+/// Drives the player frame's name text from the local player's `PlayerName`.
+/// Runs every frame but only writes when the text differs, so it is effectively
+/// free after the name arrives.
+pub fn update_player_name(
+    own_entity: Option<Res<OwnServerEntity>>,
+    player_names: Query<&PlayerName>,
+    mut text_q: Query<&mut Text, With<PlayerNameText>>,
+) {
+    let Some(own) = own_entity else { return };
+    let Ok(name) = player_names.get(own.0) else { return };
+    let Ok(mut text) = text_q.single_mut() else { return };
+    if text.0 != name.0 {
+        text.0 = name.0.clone();
+    }
+}
+
+/// Recolors the target frame's avatar to match the selected entity's
+/// group-frame avatar:
+///   • own player  → green   (matches the self row in the group frame)
+///   • party member → blue   (matches remote-player rows)
+///   • enemy / other → red   (the original target-frame accent)
+pub fn update_target_avatar(
+    selected: Res<SelectedTarget>,
+    own_entity: Option<Res<OwnServerEntity>>,
+    remote_q: Query<(), With<RemotePlayerMarker>>,
+    mut avatar_q: Query<&mut BackgroundColor, With<TargetAvatarBg>>,
+) {
+    if !selected.is_changed() { return; }
+    let Ok(mut bg) = avatar_q.single_mut() else { return };
+    bg.0 = match selected.0 {
+        None => Color::srgba(0.65, 0.20, 0.20, 0.5),
+        Some(e) if own_entity.as_ref().map(|r| r.0 == e).unwrap_or(false) => {
+            Color::srgb(0.25, 0.55, 0.25).with_alpha(0.5) // self = green
+        }
+        Some(e) if remote_q.contains(e) => {
+            Color::srgb(0.20, 0.40, 0.60).with_alpha(0.5) // party member = blue
+        }
+        _ => Color::srgb(0.65, 0.20, 0.20).with_alpha(0.5), // enemy = red
+    };
+}
 
 /// Updates the name text inside the target frame when the selection changes.
 /// Checks `EnemyName` first, then `PlayerName` as a fallback.

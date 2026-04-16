@@ -24,7 +24,7 @@ impl Plugin for SharedPlugin {
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
             },
-            player::{PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
+            player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
         };
         use messages::{PlayerDespawnedMsg, PlayerSpawnedMsg, RequestSpawnMsg};
 
@@ -58,6 +58,11 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ServerToClient);
 
         // ── Components: player identity (replicated once at spawn) ─────────────
+        app.register_component::<GroupId>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
         app.register_component::<PlayerId>()
             .with_replication_config(ComponentReplicationConfig {
                 replicate_once: true,

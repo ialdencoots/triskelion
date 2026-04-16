@@ -11,7 +11,7 @@ use shared::components::minigame::{
     value_lock::ValueLockState, wave_interference::WaveInterferenceState,
 };
 use shared::components::player::{
-    Class, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity,
+    Class, GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity,
 };
 use shared::messages::RequestSpawnMsg;
 use shared::terrain;
@@ -85,6 +85,7 @@ pub fn process_spawn_requests(
             let player_entity = commands.spawn((
                 Name::new(format!("Player_{}", req.name)),
                 PlayerId(client_id),
+                GroupId(0), // All clients share group 0 for now
                 PlayerName(req.name.clone()),
                 PlayerClass(req.class.clone()),
                 PlayerSubclass(req.subclass.clone()),

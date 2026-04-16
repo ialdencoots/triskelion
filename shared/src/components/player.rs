@@ -13,6 +13,11 @@ use super::minigame::{
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerId(pub u64);
 
+/// Party/group membership.  All clients are assigned to group 0 until
+/// multi-group support is added.  Replicated once at spawn.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct GroupId(pub u32);
+
 /// Display name chosen at spawn.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerName(pub String);
