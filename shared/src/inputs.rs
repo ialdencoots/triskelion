@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 pub struct PlayerInput {
     /// 2D movement direction. The server normalizes this before applying.
     pub movement: Vec2,
+    /// Client physics body Y position this tick, used to relay vertical motion
+    /// (jumps, falling) to other clients via the replicated `PlayerPosition`.
+    pub y: f32,
+    /// Client physics body vertical velocity this tick, relayed via `PlayerVelocity`
+    /// so remote clients can dead-reckon Y between server updates.
+    pub vy: f32,
     /// Discrete ability button presses this tick.
     pub abilities: AbilityInput,
     /// Minigame mechanic input events this tick.

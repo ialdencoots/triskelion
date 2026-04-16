@@ -108,10 +108,11 @@ impl From<Vec3> for PlayerPosition {
     }
 }
 
-/// XZ velocity replicated alongside PlayerPosition for client dead-reckoning.
+/// XZ and vertical velocity replicated alongside PlayerPosition for client dead-reckoning.
 #[derive(Component, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct PlayerVelocity {
     pub vx: f32,
+    pub vy: f32,
     pub vz: f32,
 }
 

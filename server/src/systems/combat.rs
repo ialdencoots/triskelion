@@ -31,15 +31,25 @@ pub fn process_player_inputs(
 
             vel.vx = dir.x * PLAYER_SPEED;
             vel.vz = dir.z * PLAYER_SPEED;
+            // Relay the client's physics Y and vertical velocity so other clients
+            // can see jumps via dead-reckoning.
+            vel.vy = input.vy;
+            pos.x += vel.vx * dt;
+            pos.z += vel.vz * dt;
+            pos.y = input.y;
         } else {
-            // No input this tick — player is idle.
+            // No input this tick — zero XZ motion.
             vel.vx = 0.0;
             vel.vz = 0.0;
+            vel.vy = 0.0;
+            // Only snap to terrain when the player is already at (or below) ground
+            // level.  If they are clearly airborne, hold the last replicated Y so
+            // a single dropped packet mid-jump does not teleport them to the ground.
+            let floor_y = terrain::height_at(pos.x, pos.z) + 1.1;
+            if pos.y <= floor_y + 0.1 {
+                pos.y = floor_y;
+            }
         }
-
-        pos.x += vel.vx * dt;
-        pos.z += vel.vz * dt;
-        pos.y = terrain::height_at(pos.x, pos.z) + 1.1;
     }
 }
 
