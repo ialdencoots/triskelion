@@ -1,4 +1,4 @@
-use avian3d::prelude::Collider;
+use avian3d::prelude::{Collider, Sensor};
 use bevy::prelude::*;
 
 use shared::components::enemy::{EnemyMarker, EnemyPosition, EnemyVelocity};
@@ -53,7 +53,10 @@ pub fn on_enemy_replicated(
         Transform::from_translation(translation),
         EnemyDeadReckoning { base_pos: translation, vel, base_time: time.elapsed_secs() },
         // Collider required for SpatialQuery::cast_ray click selection.
+        // Sensor makes the capsule intangible (no collision response) while
+        // still being hittable by raycasts.
         Collider::capsule(0.4, 1.0),
+        Sensor,
     ));
     info!("[CLIENT] Inserted mesh+collider for enemy {entity:?}");
 }

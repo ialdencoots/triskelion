@@ -1,4 +1,4 @@
-use avian3d::prelude::{Collider, Position};
+use avian3d::prelude::{Collider, Position, Sensor};
 use bevy::prelude::*;
 
 use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
@@ -71,7 +71,9 @@ pub fn on_remote_player_replicated(
         })),
         Transform::from_translation(translation),
         PlayerDeadReckoning { base_pos: translation, vel, vel_y, base_time: time.elapsed_secs() },
+        // Sensor: intangible for physics but still hittable by raycasts (click selection).
         Collider::capsule(0.4, 1.0),
+        Sensor,
         RemotePlayerMarker,
     ));
     info!("[CLIENT] Rendering remote player {entity:?} (client_id={})", play_id.0);
