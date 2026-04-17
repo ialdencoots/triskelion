@@ -19,3 +19,4 @@ lightyear = { workspace = true, features = [
 ] }
 shared = { path = "../shared" }
 serde = { workspace = true }
+fastnoise-lite = { workspace = true }

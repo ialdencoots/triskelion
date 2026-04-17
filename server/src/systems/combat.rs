@@ -2,11 +2,13 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 
 use shared::components::combat::{AbilityCooldowns, CombatState};
+use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
 use shared::inputs::PlayerInput;
-use shared::terrain;
+use shared::instances::{find_def, sample_height};
 
 use super::connection::PlayerEntityLink;
+use super::instances::InstanceRegistry;
 
 const PLAYER_SPEED: f32 = 6.0;
 
@@ -14,15 +16,16 @@ const PLAYER_SPEED: f32 = 6.0;
 /// movement and stance changes to their server-side components.
 pub fn process_player_inputs(
     time: Res<Time>,
+    reg: Res<InstanceRegistry>,
     mut link_query: Query<(&PlayerEntityLink, &mut MessageReceiver<PlayerInput>)>,
-    mut player_query: Query<(&mut PlayerPosition, &mut PlayerVelocity, &mut CombatState), With<PlayerId>>,
+    mut player_query: Query<(&mut PlayerPosition, &mut PlayerVelocity, &mut CombatState, Option<&InstanceId>), With<PlayerId>>,
 ) {
     let dt = time.delta_secs();
 
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat, iid_opt)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -56,7 +59,16 @@ pub fn process_player_inputs(
             vel.vx = 0.0;
             vel.vz = 0.0;
             vel.vy = 0.0;
-            let floor_y = terrain::height_at(pos.x, pos.z) + 1.1;
+            let floor_y = if let Some(iid) = iid_opt {
+                if let Some(live) = reg.instances.get(&iid.0) {
+                    let def = find_def(live.kind);
+                    sample_height(&live.noise, pos.x, pos.z, &def.terrain) + 1.1
+                } else {
+                    pos.y
+                }
+            } else {
+                pos.y
+            };
             if pos.y <= floor_y + 0.1 {
                 pos.y = floor_y;
             }

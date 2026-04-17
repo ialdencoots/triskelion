@@ -7,6 +7,7 @@ use bevy_tnua_avian3d::*;
 pub mod camera;
 pub mod controller;
 pub mod enemies;
+pub mod instance;
 pub mod players;
 pub mod selection;
 pub mod terrain;
@@ -31,6 +32,7 @@ impl Plugin for WorldPlugin {
 
         app.init_resource::<camera::OrbitState>();
         app.init_resource::<SelectedTarget>();
+        app.init_resource::<instance::CurrentInstanceTerrain>();
 
         app.add_systems(
             Startup,
@@ -51,6 +53,7 @@ impl Plugin for WorldPlugin {
         app.add_systems(
             Update,
             (
+                instance::handle_instance_entered,
                 controller::handle_input,
                 camera::update_orbit_camera,
                 selection::select_on_click,

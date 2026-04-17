@@ -5,9 +5,10 @@ use lightyear::prelude::*;
 use shared::channels::GameChannel;
 use shared::components::player::RoleStance;
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
-use shared::terrain;
+use shared::instances::sample_height;
 
 use crate::world::camera::OrbitState;
+use crate::world::instance::CurrentInstanceTerrain;
 use crate::world::terrain::PlayerMarker;
 
 /// Reads keyboard/gamepad state each frame, constructs a `PlayerInput`, and
@@ -22,6 +23,7 @@ pub fn gather_and_send_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     orbit: Res<OrbitState>,
+    terrain: Res<CurrentInstanceTerrain>,
     player_query: Query<(&Transform, &LinearVelocity), With<PlayerMarker>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
 ) {
@@ -59,7 +61,7 @@ pub fn gather_and_send_input(
     let (y, vy) = player_query
         .single()
         .map(|(tf, lv)| {
-            let terrain_y = terrain::height_at(tf.translation.x, tf.translation.z);
+            let terrain_y = sample_height(&terrain.noise, tf.translation.x, tf.translation.z, &terrain.cfg);
             let height_above = tf.translation.y - terrain_y;
             let is_airborne = lv.y.abs() > 1.0 || height_above > 2.2;
             if is_airborne {

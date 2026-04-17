@@ -6825,6 +6825,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "fastnoise-lite",
  "lightyear",
  "serde",
  "shared",

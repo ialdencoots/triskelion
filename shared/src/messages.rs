@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::components::player::{Class, Subclass};
+use crate::instances::{InstanceKind, TerrainConfig};
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
@@ -21,6 +22,18 @@ pub struct PlayerSpawnedMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerDespawnedMsg {
     pub client_id: u64,
+}
+
+/// Sent to a client when the server assigns them to an instance.
+/// The client uses `terrain` to rebuild its terrain mesh and `spawn_{x,z}` to
+/// teleport the local physics body.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct InstanceEnteredMsg {
+    pub instance_id: u32,
+    pub kind: InstanceKind,
+    pub terrain: TerrainConfig,
+    pub spawn_x: f32,
+    pub spawn_z: f32,
 }
 
 // ── Client → Server ──────────────────────────────────────────────────────────

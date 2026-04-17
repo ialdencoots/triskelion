@@ -4,12 +4,13 @@ use lightyear::prelude::server::*;
 
 use shared::settings;
 
-use crate::systems::{combat, connection, enemy, minigame};
+use crate::systems::{combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
 
 pub struct ServerGamePlugin;
 
 impl Plugin for ServerGamePlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<InstanceRegistry>();
         app.add_systems(Startup, start_listening);
         app.add_observer(enemy::on_server_started);
         app.add_observer(debug_server_linked);
@@ -31,6 +32,7 @@ impl Plugin for ServerGamePlugin {
                 // Spawn requests must be processed before input so the
                 // PlayerEntityLink exists when process_player_inputs runs.
                 connection::process_spawn_requests,
+                instances::tick_instance_teardown,
                 enemy::tick_enemy_walk,
                 combat::process_player_inputs,
                 combat::tick_ability_cooldowns,

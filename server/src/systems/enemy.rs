@@ -1,72 +1,102 @@
 use bevy::prelude::*;
-use lightyear::prelude::*;
 use lightyear::prelude::server::*;
 
-use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity};
-use shared::terrain;
+use shared::components::enemy::{EnemyPosition, EnemyVelocity};
+use shared::components::instance::InstanceId;
+use shared::components::player::{PlayerId, PlayerPosition};
+use shared::instances::{find_def, sample_height, InstanceKind};
 
-/// Server-only AI state.  Never replicated.
-#[derive(Component)]
-pub struct EnemyWalkState {
-    /// Per-enemy phase offset so multiple enemies wander in different paths.
-    phase: f32,
-}
+use super::instances::{create_instance, InstanceRegistry};
+use super::mob_defs::MobBehavior;
 
-/// Fires when the Lightyear server finishes starting (Started component added).
-/// Spawning here guarantees Replicate::on_insert finds an active server and
-/// populates per_sender_state so enemies replicate to connecting clients.
+/// Fires when the NetcodeServer reports `Started`.
+/// Creates the group-0 overworld instance and populates it with mobs.
 pub fn on_server_started(
     trigger: On<Add, Started>,
     server_q: Query<(), With<NetcodeServer>>,
-    mut commands: Commands,
+    mut reg: ResMut<InstanceRegistry>,
+    _commands: Commands,
 ) {
     let entity = trigger.event_target();
     if server_q.get(entity).is_err() {
-        info!("[SERVER] on_server_started: Started added to {entity:?} which is NOT a NetcodeServer — skipping");
+        info!(
+            "[SERVER] on_server_started: Started on {entity:?} is NOT a NetcodeServer — skipping"
+        );
         return;
     }
-    info!("[SERVER] on_server_started: Started on NetcodeServer {entity:?} — spawning enemies");
-    const NAMES: &[&str] = &["Goblin", "Orc", "Troll"];
-    for (i, (x, z)) in [(5.0_f32, -4.0_f32), (-8.0, 6.0), (12.0, 3.0)].iter().enumerate() {
-        let y = terrain::height_at(*x, *z) + 1.1;
-        let enemy = commands.spawn((
-            Name::new(format!("Enemy{}", i + 1)),
-            EnemyMarker,
-            EnemyName(NAMES[i].to_string()),
-            EnemyPosition::new(*x, y, *z),
-            EnemyVelocity { vx: 0.0, vz: 0.0 },
-            EnemyWalkState { phase: i as f32 * 2.1 },
-            Replicate::to_clients(NetworkTarget::All),
-        )).id();
-        info!("[SERVER] Spawned Enemy{} as {enemy:?} at ({x:.1}, {y:.1}, {z:.1})", i + 1);
-    }
+    // Create the overworld instance so group_instances is populated before any
+    // client connects.  Mobs are populated lazily in process_spawn_requests
+    // when the first player joins, so they can be spawned with the correct
+    // NetworkTarget::Only([first_client]) from the start.
+    info!("[SERVER] on_server_started: creating group-0 Overworld instance");
+    create_instance(InstanceKind::Overworld, 0, &mut reg);
 }
 
-pub fn tick_enemy_walk(time: Res<Time>, mut query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &EnemyWalkState)>) {
+const SPEED: f32 = 2.5;
+
+/// Advances all mob AI each fixed tick.
+/// Dispatches on `MobBehavior`: Wander uses Lissajous paths, Aggro chases
+/// the nearest player in the same instance.
+pub fn tick_enemy_walk(
+    time: Res<Time>,
+    reg: Res<InstanceRegistry>,
+    mut mob_query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &MobBehavior, &InstanceId)>,
+    player_query: Query<(&PlayerPosition, &InstanceId), With<PlayerId>>,
+) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
 
-    // Log enemy count every 5 seconds.
     let prev = (t - dt) as u32;
     let curr = t as u32;
     if curr != prev && curr % 5 == 0 {
-        let count = query.iter().count();
-        info!("[SERVER] tick_enemy_walk: {count} enemies at t={t:.1}s");
+        let count = mob_query.iter().count();
+        info!("[SERVER] tick_enemy_walk: {count} mobs at t={t:.1}s");
     }
-    const SPEED: f32 = 2.5;
 
-    for (mut pos, mut vel, walk) in query.iter_mut() {
-        // Lissajous-style wandering: two sine waves at different frequencies
-        // give a natural, looping path unique to each enemy's phase offset.
-        let dx = (t * 0.4 + walk.phase).sin();
-        let dz = (t * 0.3 + walk.phase * 1.7).cos();
-        let dir = Vec2::new(dx, dz).normalize_or_zero();
+    for (mut pos, mut vel, behavior, iid) in mob_query.iter_mut() {
+        match behavior {
+            MobBehavior::Wander { phase } => {
+                let dx = (t * 0.4 + phase).sin();
+                let dz = (t * 0.3 + phase * 1.7).cos();
+                let dir = Vec2::new(dx, dz).normalize_or_zero();
+                vel.vx = dir.x * SPEED;
+                vel.vz = dir.y * SPEED;
+            }
+            MobBehavior::Aggro { aggro_range, melee_range } => {
+                // Find nearest player in the same instance.
+                let nearest = player_query
+                    .iter()
+                    .filter(|(_, pid)| pid.0 == iid.0)
+                    .map(|(ppos, _)| {
+                        let dx = ppos.x - pos.x;
+                        let dz = ppos.z - pos.z;
+                        let dist = (dx * dx + dz * dz).sqrt();
+                        (dist, dx, dz)
+                    })
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-        vel.vx = dir.x * SPEED;
-        vel.vz = dir.y * SPEED;
+                if let Some((dist, dx, dz)) = nearest {
+                    if dist <= *aggro_range && dist > *melee_range {
+                        let dir = Vec2::new(dx, dz).normalize_or_zero();
+                        vel.vx = dir.x * SPEED;
+                        vel.vz = dir.y * SPEED;
+                    } else {
+                        vel.vx = 0.0;
+                        vel.vz = 0.0;
+                    }
+                } else {
+                    vel.vx = 0.0;
+                    vel.vz = 0.0;
+                }
+            }
+        }
 
         pos.x += vel.vx * dt;
         pos.z += vel.vz * dt;
-        pos.y = terrain::height_at(pos.x, pos.z) + 1.1;
+
+        if let Some(live) = reg.instances.get(&iid.0) {
+            let def = find_def(live.kind);
+            pos.y = sample_height(&live.noise, pos.x, pos.z, &def.terrain) + 1.1;
+        }
     }
 }

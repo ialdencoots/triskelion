@@ -2,7 +2,9 @@ use avian3d::prelude::{Collider, Position, Sensor};
 use bevy::prelude::*;
 
 use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
-use shared::terrain;
+use shared::instances::sample_height;
+
+use super::instance::CurrentInstanceTerrain;
 
 use crate::plugin::LocalClientId;
 
@@ -104,6 +106,7 @@ pub fn apply_player_corrections(
 /// then smoothly chases the target so server corrections never produce instant jumps.
 pub fn sync_player_positions(
     time: Res<Time>,
+    terrain: Res<CurrentInstanceTerrain>,
     mut query: Query<(&PlayerDeadReckoning, &mut Transform), With<RemotePlayerMarker>>,
 ) {
     let t = time.elapsed_secs();
@@ -113,7 +116,7 @@ pub fn sync_player_positions(
         let target_x = dr.base_pos.x + dr.vel.x * dt;
         let target_z = dr.base_pos.z + dr.vel.y * dt;
         let extrap_y = dr.base_pos.y + dr.vel_y * dt;
-        let floor_y = terrain::height_at(target_x, target_z) + 1.1;
+        let floor_y = sample_height(&terrain.noise, target_x, target_z, &terrain.cfg) + 1.1;
         let target_y = extrap_y.max(floor_y);
         let target = Vec3::new(target_x, target_y, target_z);
 
@@ -132,6 +135,7 @@ pub fn correct_local_player_position(
     own_server_entity: Option<Res<OwnServerEntity>>,
     server_query: Query<&PlayerPosition, Changed<PlayerPosition>>,
     mut player_query: Query<(&Transform, &mut Position), With<PlayerMarker>>,
+    terrain: Res<CurrentInstanceTerrain>,
 ) {
     let Some(own) = own_server_entity else { return };
     let Ok(server_pos) = server_query.get(own.0) else { return };
@@ -145,7 +149,7 @@ pub fn correct_local_player_position(
         return;
     }
 
-    let floor_y = terrain::height_at(server_pos.x, server_pos.z) + 1.1;
+    let floor_y = sample_height(&terrain.noise, server_pos.x, server_pos.z, &terrain.cfg) + 1.1;
     avian_pos.0.x = server_pos.x;
     avian_pos.0.z = server_pos.z;
     avian_pos.0.y = server_pos.y.max(floor_y);

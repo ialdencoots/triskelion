@@ -3,6 +3,7 @@
 pub mod channels;
 pub mod components;
 pub mod inputs;
+pub mod instances;
 pub mod messages;
 pub mod settings;
 pub mod terrain;
@@ -20,13 +21,14 @@ impl Plugin for SharedPlugin {
         use components::{
             combat::{AbilityCooldowns, CombatState, Health},
             enemy::{EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity},
+            instance::InstanceId,
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{PlayerDespawnedMsg, PlayerSpawnedMsg, RequestSpawnMsg};
+        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestSpawnMsg};
 
         // ── Channels ──────────────────────────────────────────────────────────
         app.add_channel::<GameChannel>(ChannelSettings {
@@ -55,6 +57,9 @@ impl Plugin for SharedPlugin {
             .add_map_entities();
 
         app.register_message::<PlayerDespawnedMsg>()
+            .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<InstanceEnteredMsg>()
             .add_direction(NetworkDirection::ServerToClient);
 
         // ── Components: player identity (replicated once at spawn) ─────────────
@@ -106,6 +111,13 @@ impl Plugin for SharedPlugin {
         app.register_component::<Health>();
         app.register_component::<CombatState>();
         app.register_component::<AbilityCooldowns>();
+
+        // ── Components: instance identity (replicated once at spawn) ─────────
+        app.register_component::<InstanceId>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
 
         // ── Components: minigame state (server-authoritative, no prediction) ──
         // These are never predicted on the client — the client renders exactly

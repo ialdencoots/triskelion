@@ -2,7 +2,9 @@ use avian3d::prelude::{Collider, Sensor};
 use bevy::prelude::*;
 
 use shared::components::enemy::{EnemyMarker, EnemyPosition, EnemyVelocity};
-use shared::terrain;
+use shared::instances::sample_height;
+
+use super::instance::CurrentInstanceTerrain;
 
 /// Client-only dead-reckoning state.  Not replicated.
 ///
@@ -92,6 +94,7 @@ pub fn apply_server_corrections(
 /// rate even when no server update has arrived.
 pub fn sync_enemy_positions(
     time: Res<Time>,
+    terrain: Res<CurrentInstanceTerrain>,
     mut query: Query<(&EnemyDeadReckoning, &mut Transform), With<EnemyMarker>>,
 ) {
     // Log enemy count every 5 seconds.
@@ -109,7 +112,7 @@ pub fn sync_enemy_positions(
         let extrap_dt = (t - dr.base_time).clamp(0.0, 0.3);
         let new_x = dr.base_pos.x + dr.vel.x * extrap_dt;
         let new_z = dr.base_pos.z + dr.vel.y * extrap_dt;
-        let new_y = terrain::height_at(new_x, new_z) + 1.1;
+        let new_y = sample_height(&terrain.noise, new_x, new_z, &terrain.cfg) + 1.1;
         tf.translation = Vec3::new(new_x, new_y, new_z);
     }
 }

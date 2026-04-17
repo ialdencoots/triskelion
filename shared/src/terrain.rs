@@ -1,19 +1,19 @@
 //! Shared terrain height function used by both the server (AI ground-following)
-//! and the client (mesh generation).  Parameters must stay in sync.
+//! and the client (mesh generation).
+//!
+//! **Shim:** `height_at(x, z)` delegates to `instances::sample_height` using
+//! the default `TerrainConfig`.  All call sites will migrate to
+//! `instances::sample_height` with a cached noise object in Phase 4.
 
-use fastnoise_lite::*;
+use crate::instances::{build_noise, sample_height, TerrainConfig};
 
-pub const TERRAIN_SCALE: f32 = 1.0;
-pub const HEIGHT_SCALE: f32 = 6.0;
-
-/// Returns the terrain surface Y at world position (x, z).
+/// Returns the terrain surface Y at world position (x, z), using the default
+/// `TerrainConfig`.  Rebuilds the noise object on every call — kept for
+/// backwards compatibility during migration; prefer `sample_height` with a
+/// cached `FastNoiseLite`.
+#[deprecated(note = "Use instances::sample_height with a cached noise object")]
 pub fn height_at(x: f32, z: f32) -> f32 {
-    let mut noise = FastNoiseLite::new();
-    noise.set_noise_type(Some(NoiseType::Perlin));
-    noise.set_frequency(Some(0.04));
-    noise.set_fractal_type(Some(FractalType::FBm));
-    noise.set_fractal_octaves(Some(4));
-    noise.set_fractal_lacunarity(Some(2.0));
-    noise.set_fractal_gain(Some(0.5));
-    noise.get_noise_2d(x, z) * HEIGHT_SCALE
+    let cfg = TerrainConfig::default();
+    let noise = build_noise(&cfg);
+    sample_height(&noise, x, z, &cfg)
 }
