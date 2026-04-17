@@ -1,4 +1,5 @@
 use avian3d::prelude::*;
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 
 use crate::world::camera::OrbitCamera;
@@ -6,27 +7,55 @@ use crate::world::players::RemotePlayerMarker;
 use crate::world::terrain::PlayerMarker;
 use shared::components::enemy::EnemyMarker;
 
+/// A left-click is a "tap" (select) only if total mouse movement while held
+/// stays below this pixel threshold.
+const DRAG_THRESHOLD: f32 = 4.0;
+
 #[derive(Resource, Default)]
 pub struct SelectedTarget(pub Option<Entity>);
 
+/// Tracks whether the in-progress left-click is a tap or a drag.
+#[derive(Resource, Default)]
+pub struct LeftClickState {
+    drag_px: f32,
+    started_on_ui: bool,
+}
+
+/// Runs each frame to accumulate drag distance for the held left button.
+/// Must run before `select_on_click`.
+pub fn track_left_drag(
+    buttons: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    ui_buttons: Query<&Interaction, With<Button>>,
+    mut state: ResMut<LeftClickState>,
+) {
+    if buttons.just_pressed(MouseButton::Left) {
+        state.drag_px = 0.0;
+        state.started_on_ui = ui_buttons
+            .iter()
+            .any(|i| matches!(i, Interaction::Pressed | Interaction::Hovered));
+    }
+    if buttons.pressed(MouseButton::Left) {
+        state.drag_px += mouse_motion.delta.length();
+    }
+}
+
 pub fn select_on_click(
     buttons: Res<ButtonInput<MouseButton>>,
+    state: Res<LeftClickState>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     spatial_query: SpatialQuery,
     enemy_query: Query<(), With<EnemyMarker>>,
     remote_player_query: Query<(), With<RemotePlayerMarker>>,
-    ui_buttons: Query<&Interaction, With<Button>>,
     mut selected: ResMut<SelectedTarget>,
 ) {
-    // Only act on a plain left click — skip if right mouse is held (that's orbit/movement).
-    if !buttons.just_pressed(MouseButton::Left) || buttons.pressed(MouseButton::Right) {
-        return;
-    }
-
-    // If the click landed on a UI button (e.g. a party-frame row), let that
-    // handler own the selection and don't also fire a world raycast.
-    if ui_buttons.iter().any(|i| *i == Interaction::Pressed) {
+    // Fire on release only — and only if the cursor barely moved (tap, not drag).
+    if !buttons.just_released(MouseButton::Left)
+        || buttons.pressed(MouseButton::Right)
+        || state.drag_px > DRAG_THRESHOLD
+        || state.started_on_ui
+    {
         return;
     }
 
@@ -38,7 +67,7 @@ pub fn select_on_click(
     let hit = spatial_query.cast_ray(
         ray.origin,
         ray.direction,
-        500.0,
+        2000.0,
         true,
         &SpatialQueryFilter::default(),
     );
@@ -48,12 +77,11 @@ pub fn select_on_click(
         .map(|h| h.entity);
 }
 
-/// Tab key cycles through enemies and remote players within range, sorted nearest-first.
+/// Tab key cycles through nearby enemies, sorted nearest-first.
 pub fn tab_cycle_selection(
     keys: Res<ButtonInput<KeyCode>>,
     player_query: Query<&GlobalTransform, With<PlayerMarker>>,
     enemy_query: Query<(Entity, &Transform), With<EnemyMarker>>,
-    remote_player_query: Query<(Entity, &Transform), With<RemotePlayerMarker>>,
     mut selected: ResMut<SelectedTarget>,
 ) {
     if !keys.just_pressed(KeyCode::Tab) {
@@ -66,7 +94,6 @@ pub fn tab_cycle_selection(
 
     let mut nearby: Vec<(Entity, f32)> = enemy_query
         .iter()
-        .chain(remote_player_query.iter())
         .filter_map(|(e, tf)| {
             let dist = tf.translation.distance(player_pos);
             if dist <= RANGE { Some((e, dist)) } else { None }

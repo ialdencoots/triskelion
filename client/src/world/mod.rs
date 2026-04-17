@@ -32,6 +32,7 @@ impl Plugin for WorldPlugin {
 
         app.init_resource::<camera::OrbitState>();
         app.init_resource::<SelectedTarget>();
+        app.init_resource::<selection::LeftClickState>();
         app.init_resource::<instance::CurrentInstanceTerrain>();
         app.init_resource::<instance::CurrentInstanceId>();
 
@@ -58,6 +59,7 @@ impl Plugin for WorldPlugin {
                 instance::sync_instance_visibility,
                 controller::handle_input,
                 camera::update_orbit_camera,
+                selection::track_left_drag,
                 selection::select_on_click,
                 selection::tab_cycle_selection,
                 enemies::apply_server_corrections,

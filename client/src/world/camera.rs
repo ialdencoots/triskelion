@@ -39,8 +39,8 @@ pub fn update_orbit_camera(
         return;
     }
 
-    // Orbit on right-click drag
-    if mouse_buttons.pressed(MouseButton::Right) {
+    // Orbit on right-click drag or left-click drag
+    if mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Left) {
         orbit.yaw -= mouse_motion.delta.x * 0.005;
         orbit.pitch = (orbit.pitch - mouse_motion.delta.y * 0.005).clamp(-1.4, -0.05);
     }
