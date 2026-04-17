@@ -83,4 +83,4 @@ Each class has two coupled minigames. The server runs all minigame simulations a
 
 The server is authoritative. Minigame state machines tick in `FixedUpdate` at 64 Hz on the server. Clients predict player movement locally via physics, receive replicated minigame state, and render overlay UI without running their own simulations. Enemy positions replicate unreliably; player positions reliably.
 
-Instances (overworld, Crystal Caverns) support up to 5 players each and are managed server-side. Terrain is generated procedurally with Perlin noise.
+Instances (aside from overworld) support up to 5 players each and are managed server-side. Terrain is generated procedurally with Perlin noise.
