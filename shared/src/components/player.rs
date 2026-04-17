@@ -68,7 +68,17 @@ pub enum Subclass {
     Thornweave,
 }
 
-/// Active role output stances. Entering a stance starts the class minigame.
+/// The three universal combat roles.  Any player can enter any role; subclass
+/// determines efficacy within it.  Keys: 1 = Tank, 2 = DPS, 3 = Heal.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoleStance {
+    Tank,
+    Dps,
+    Heal,
+}
+
+/// Subclass-specific stance flavors — preserved for future minigame integration.
+/// Entering a stance starts the class minigame.
 /// Outside of a stance the player has no output.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Stance {

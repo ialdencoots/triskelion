@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::player::Stance;
+use super::player::RoleStance;
 
 /// Hit points. Replicated server-to-client; interpolated for smooth display.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -26,12 +26,12 @@ impl Default for Health {
     }
 }
 
-/// Tracks whether this player is currently in combat and which stance, if any, is active.
-/// Exiting a stance suspends the minigame and starts `stance_cd`.
+/// Tracks whether this player is currently in combat and which role stance, if
+/// any, is active.  Exiting a stance suspends the minigame and starts `stance_cd`.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct CombatState {
     pub in_combat: bool,
-    pub active_stance: Option<Stance>,
+    pub active_stance: Option<RoleStance>,
 }
 
 /// Remaining cooldown in seconds for each ability slot.

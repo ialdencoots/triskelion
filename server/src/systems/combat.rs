@@ -11,40 +11,47 @@ use super::connection::PlayerEntityLink;
 const PLAYER_SPEED: f32 = 6.0;
 
 /// Read buffered `PlayerInput` messages from all connected clients and apply
-/// movement to their server-side `PlayerPosition` / `PlayerVelocity`.
+/// movement and stance changes to their server-side components.
 pub fn process_player_inputs(
     time: Res<Time>,
     mut link_query: Query<(&PlayerEntityLink, &mut MessageReceiver<PlayerInput>)>,
-    mut player_query: Query<(&mut PlayerPosition, &mut PlayerVelocity), With<PlayerId>>,
+    mut player_query: Query<(&mut PlayerPosition, &mut PlayerVelocity, &mut CombatState), With<PlayerId>>,
 ) {
     let dt = time.delta_secs();
 
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
-            // The client encodes world-space XZ as (movement.x, -movement.z).
+            // ── Movement ───────────────────────────────────────────────────────
             let raw = Vec3::new(input.movement.x, 0.0, -input.movement.y);
             let dir = if raw.length_squared() > 0.01 { raw.normalize() } else { Vec3::ZERO };
 
             vel.vx = dir.x * PLAYER_SPEED;
             vel.vz = dir.z * PLAYER_SPEED;
-            // Relay the client's physics Y and vertical velocity so other clients
-            // can see jumps via dead-reckoning.
             vel.vy = input.vy;
             pos.x += vel.vx * dt;
             pos.z += vel.vz * dt;
             pos.y = input.y;
+
+            // ── Stance transitions ─────────────────────────────────────────────
+            if input.abilities.exit_stance {
+                combat.active_stance = None;
+            } else if let Some(stance) = input.abilities.enter_stance {
+                // Pressing the active stance's key again toggles back to neutral.
+                combat.active_stance = if combat.active_stance == Some(stance) {
+                    None
+                } else {
+                    Some(stance)
+                };
+            }
         } else {
             // No input this tick — zero XZ motion.
             vel.vx = 0.0;
             vel.vz = 0.0;
             vel.vy = 0.0;
-            // Only snap to terrain when the player is already at (or below) ground
-            // level.  If they are clearly airborne, hold the last replicated Y so
-            // a single dropped packet mid-jump does not teleport them to the ground.
             let floor_y = terrain::height_at(pos.x, pos.z) + 1.1;
             if pos.y <= floor_y + 0.1 {
                 pos.y = floor_y;

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 
 use shared::channels::GameChannel;
+use shared::components::player::RoleStance;
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
 use shared::terrain;
 
@@ -69,11 +70,23 @@ pub fn gather_and_send_input(
         })
         .unwrap_or((0.0, 0.0));
 
+    // 1/2/3 enter Tank/DPS/Heal; Escape exits any active stance.
+    let enter_stance = if keyboard.just_pressed(KeyCode::Digit1) {
+        Some(RoleStance::Tank)
+    } else if keyboard.just_pressed(KeyCode::Digit2) {
+        Some(RoleStance::Dps)
+    } else if keyboard.just_pressed(KeyCode::Digit3) {
+        Some(RoleStance::Heal)
+    } else {
+        None
+    };
+    let exit_stance = keyboard.just_pressed(KeyCode::Escape);
+
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),
         y,
         vy,
-        abilities: AbilityInput::default(),
+        abilities: AbilityInput { enter_stance, exit_stance, ..default() },
         minigame: MinigameInput::default(),
     });
 }

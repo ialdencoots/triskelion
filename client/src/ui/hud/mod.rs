@@ -33,6 +33,7 @@ impl Plugin for HudPlugin {
                 enemy_bars::update_enemy_bars,
                 group_frame::update_party_rows,
                 group_frame::handle_party_row_interaction,
+                action_bar::update_stance_highlight,
             ),
         );
     }

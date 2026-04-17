@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::components::player::RoleStance;
+
 /// All inputs a player can submit to the server in a single tick.
 /// Sent as a lightyear message each tick while connected.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -19,25 +21,34 @@ pub struct PlayerInput {
     pub minigame: MinigameInput,
 }
 
-/// One bit per ability slot; true = pressed this tick.
+/// Ability inputs for one tick.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct AbilityInput {
-    pub use_stance: bool,
+    /// Stance to enter this tick (1 = Tank, 2 = DPS, 3 = Heal).
+    /// `None` means no stance change was requested.
+    pub enter_stance: Option<RoleStance>,
+    /// True when the player pressed Escape to exit their current stance.
     pub exit_stance: bool,
-    pub use_mobility: bool,
-    pub use_cc: bool,
-    pub use_taunt: bool,
-    pub use_interrupt: bool,
+    /// Gap-closer or repositioning tool.
+    pub ability_1: bool,
+    /// Crowd control or disable.
+    pub ability_2: bool,
+    /// Threat management, support, or utility.
+    pub ability_3: bool,
+    /// Reaction, interrupt, or burst.
+    pub ability_4: bool,
 }
 
-/// Minigame mechanic inputs shared across all classes.
-/// Each flag is true if the corresponding action was pressed this tick.
+/// Minigame mechanic inputs for one tick.
+/// Any combination may be true simultaneously; held inputs remain true across ticks.
+/// The server resolves the meaning of each slot per class.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct MinigameInput {
-    /// Arc commit (Physical) / Bar Fill commit (Arcane) / Heartbeat commit (Nature).
-    pub commit: bool,
-    /// DAG branch selection (Physical only).
-    pub branch: bool,
-    /// Value Lock hold state (Nature only); true while button is held down.
-    pub hold: bool,
+    /// Primary timing or commit action.
+    pub action_1: bool,
+    /// Secondary mechanic input.
+    pub action_2: bool,
+    /// Additional mechanic inputs
+    pub action_3: bool,
+    pub action_4: bool,
 }
