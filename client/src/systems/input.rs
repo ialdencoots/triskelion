@@ -82,8 +82,15 @@ pub fn gather_and_send_input(
     };
     let exit_stance = keyboard.just_pressed(KeyCode::Escape);
 
+    let (x, z) = player_query
+        .single()
+        .map(|(tf, _)| (tf.translation.x, tf.translation.z))
+        .unwrap_or((0.0, 0.0));
+
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),
+        x,
+        z,
         y,
         vy,
         abilities: AbilityInput { enter_stance, exit_stance, ..default() },

@@ -79,11 +79,11 @@ pub fn on_remote_player_replicated(
     info!("[CLIENT] Rendering remote player {entity:?} (client_id={})", play_id.0);
 }
 
-/// Smoothly corrects the dead-reckoning baseline whenever the server sends a new position.
+/// Records the latest server-authoritative state into the dead-reckoning baseline.
 ///
-/// Rather than snapping `base_pos` directly to the server value, we extrapolate
-/// to the current time first, then blend toward the server position.  This eliminates
-/// the visible position jump that occurred every ~100 ms at 6 m/s.
+/// Does not attempt visual smoothing here — that belongs in `sync_player_positions`
+/// which runs every frame.  Snapping state to server truth immediately gives the
+/// extrapolation the most accurate starting point.
 pub fn apply_player_corrections(
     time: Res<Time>,
     mut query: Query<
@@ -93,83 +93,41 @@ pub fn apply_player_corrections(
 ) {
     let now = time.elapsed_secs();
     for (pos, vel, mut dr) in query.iter_mut() {
-        let server_pos = pos.to_vec3();
-
-        // Extrapolate the current predicted position for a fair comparison.
-        let extrap_dt = (now - dr.base_time).clamp(0.0, 0.3);
-        let extrap_y = dr.base_pos.y + dr.vel_y * extrap_dt;
-        let predicted = Vec3::new(
-            dr.base_pos.x + dr.vel.x * extrap_dt,
-            extrap_y,
-            dr.base_pos.z + dr.vel.y * extrap_dt,
-        );
-
-        // XZ error — drives horizontal blending.
-        let error_xz = Vec2::new(
-            server_pos.x - predicted.x,
-            server_pos.z - predicted.z,
-        ).length();
-
-        // Y error — blended independently.  Jumps produce large but valid Y
-        // differences (several metres), so we use a generous snap threshold and
-        // blend smoothly for normal corrections to avoid visible Y teleports.
-        let error_y = (server_pos.y - extrap_y).abs();
-        let new_y = if error_y < 0.3 {
-            // Dead-reckoning is close enough — trust it.
-            predicted.y
-        } else if error_y < 5.0 {
-            // Normal drift — blend 40 % toward server value.
-            predicted.y + (server_pos.y - predicted.y) * 0.4
-        } else {
-            // Large discontinuity (respawn / teleport) — snap immediately.
-            server_pos.y
-        };
-
-        let new_base = if error_xz < 0.1 {
-            // Tiny XZ error — keep current prediction.
-            Vec3::new(predicted.x, new_y, predicted.z)
-        } else if error_xz < 3.0 {
-            // Normal drift — blend 40 % toward server to converge smoothly.
-            let blended = predicted.lerp(server_pos, 0.4);
-            Vec3::new(blended.x, new_y, blended.z)
-        } else {
-            // Large discontinuity (teleport / respawn) — snap immediately.
-            server_pos
-        };
-
-        dr.base_pos = new_base;
+        dr.base_pos = pos.to_vec3();
         dr.vel = Vec2::new(vel.vx, vel.vz);
         dr.vel_y = vel.vy;
         dr.base_time = now;
     }
 }
 
-/// Extrapolates each remote player's `Transform` from its dead-reckoning baseline.
+/// Extrapolates each remote player's `Transform` from its dead-reckoning baseline,
+/// then smoothly chases the target so server corrections never produce instant jumps.
 pub fn sync_player_positions(
     time: Res<Time>,
     mut query: Query<(&PlayerDeadReckoning, &mut Transform), With<RemotePlayerMarker>>,
 ) {
     let t = time.elapsed_secs();
+    let frame_dt = time.delta_secs();
     for (dr, mut tf) in query.iter_mut() {
         let dt = (t - dr.base_time).clamp(0.0, 0.3);
-        let new_x = dr.base_pos.x + dr.vel.x * dt;
-        let new_z = dr.base_pos.z + dr.vel.y * dt;
-        // Extrapolate Y from vertical velocity; clamp to terrain so the
-        // player never clips underground if the server Y briefly goes stale.
+        let target_x = dr.base_pos.x + dr.vel.x * dt;
+        let target_z = dr.base_pos.z + dr.vel.y * dt;
         let extrap_y = dr.base_pos.y + dr.vel_y * dt;
-        let floor_y = terrain::height_at(new_x, new_z) + 1.1;
-        let new_y = extrap_y.max(floor_y);
-        tf.translation = Vec3::new(new_x, new_y, new_z);
+        let floor_y = terrain::height_at(target_x, target_z) + 1.1;
+        let target_y = extrap_y.max(floor_y);
+        let target = Vec3::new(target_x, target_y, target_z);
+
+        // Smooth-chase the extrapolated target each frame rather than snapping.
+        // At 60 fps this converges to within 2 cm in ~8 frames (~130 ms).
+        let alpha = (15.0 * frame_dt).min(1.0);
+        tf.translation = tf.translation.lerp(target, alpha);
     }
 }
 
-/// Reconciles the local physics body with the server-authoritative position.
-///
-/// Runs in `Update` but only activates when the server sends a new `PlayerPosition`
-/// (~10 Hz), via the `Changed<PlayerPosition>` filter.  Nudges Avian3d's `Position`
-/// component (not `Transform` directly) so the physics simulation starts the next
-/// tick from a corrected XZ location.  Y is intentionally left alone — TnuaController
-/// manages the float height above the terrain.
+/// Snaps the local physics body to the server position only on large discontinuities
+/// (knockbacks, teleports, respawns).  Normal divergence is ignored — the client's
+/// physics owns movement.  Y is set to at least the terrain floor so the snap never
+/// lands the player underground.
 pub fn correct_local_player_position(
     own_server_entity: Option<Res<OwnServerEntity>>,
     server_query: Query<&PlayerPosition, Changed<PlayerPosition>>,
@@ -183,12 +141,12 @@ pub fn correct_local_player_position(
     let error_z = server_pos.z - tf.translation.z;
     let error = Vec2::new(error_x, error_z).length();
 
-    if error < 0.2 {
+    if error < 3.0 {
         return;
     }
 
-    let alpha = if error > 2.0 { 1.0 } else { 0.3 };
-
-    avian_pos.0.x += error_x * alpha;
-    avian_pos.0.z += error_z * alpha;
+    let floor_y = terrain::height_at(server_pos.x, server_pos.z) + 1.1;
+    avian_pos.0.x = server_pos.x;
+    avian_pos.0.z = server_pos.z;
+    avian_pos.0.y = server_pos.y.max(floor_y);
 }

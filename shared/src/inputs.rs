@@ -7,8 +7,13 @@ use crate::components::player::RoleStance;
 /// Sent as a lightyear message each tick while connected.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct PlayerInput {
-    /// 2D movement direction. The server normalizes this before applying.
+    /// 2D movement direction. The server normalizes this before applying velocity.
     pub movement: Vec2,
+    /// Client physics body XZ position this tick, relayed via `PlayerPosition` so
+    /// other clients see the authoritative position rather than a server-integrated
+    /// approximation that drifts from the client's physics simulation over time.
+    pub x: f32,
+    pub z: f32,
     /// Client physics body Y position this tick, used to relay vertical motion
     /// (jumps, falling) to other clients via the replicated `PlayerPosition`.
     pub y: f32,
