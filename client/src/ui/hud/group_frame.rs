@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use shared::components::combat::Health;
+use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerName};
 
 use crate::plugin::LocalClientId;
@@ -229,6 +230,36 @@ pub fn update_party_rows(
             .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
             .unwrap_or(100.0);
         node.width = Val::Percent(pct);
+    }
+}
+
+/// Fades rows whose game entity is in a different instance than the local player.
+pub fn update_party_row_fade(
+    local_id: Res<LocalClientId>,
+    player_q: Query<(&PlayerId, Option<&InstanceId>)>,
+    mut name_q: Query<(&PartyNameText, &mut TextColor)>,
+    mut fill_q: Query<(&PartyHealthFill, &mut BackgroundColor)>,
+) {
+    let local_instance = player_q
+        .iter()
+        .find(|(pid, _)| pid.0 == local_id.0)
+        .and_then(|(_, iid)| iid.copied());
+
+    let same_instance = |game_entity: Entity| -> bool {
+        let member_instance = player_q.get(game_entity).ok().and_then(|(_, iid)| iid.copied());
+        match (local_instance, member_instance) {
+            (Some(l), Some(m)) => l == m,
+            _ => true,
+        }
+    };
+
+    for (PartyNameText(e), mut color) in name_q.iter_mut() {
+        let alpha = if same_instance(*e) { 0.85 } else { 0.30 };
+        color.0 = color.0.with_alpha(alpha);
+    }
+    for (PartyHealthFill(e), mut bg) in fill_q.iter_mut() {
+        let alpha = if same_instance(*e) { 1.0 } else { 0.30 };
+        bg.0 = bg.0.with_alpha(alpha);
     }
 }
 

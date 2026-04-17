@@ -34,6 +34,7 @@ impl Plugin for HudPlugin {
                 frames::update_target_health_fill,
                 enemy_bars::update_enemy_bars,
                 group_frame::update_party_rows,
+                group_frame::update_party_row_fade,
                 group_frame::handle_party_row_interaction,
                 action_bar::update_stance_highlight,
                 instance_button::handle_instance_button,
