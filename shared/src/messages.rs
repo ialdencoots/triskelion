@@ -46,6 +46,14 @@ pub struct RequestSpawnMsg {
     pub subclass: Subclass,
 }
 
+/// Sent by a client to request entering a specific instance.
+/// The server finds or creates the group's instance of that kind, assigns the
+/// player to it, and replies with `InstanceEnteredMsg`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RequestInstanceMsg {
+    pub kind: InstanceKind,
+}
+
 // ── MapEntities ───────────────────────────────────────────────────────────────
 
 impl MapEntities for PlayerSpawnedMsg {

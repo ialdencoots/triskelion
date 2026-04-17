@@ -89,6 +89,9 @@ pub struct InstanceDef {
     /// Ordered list of path nodes.  Index 0 is always the entry/spawn point.
     pub nodes: &'static [PathNode],
     pub max_players: u8,
+    /// When true, terrain generation carves walkable corridors/rooms from the
+    /// node graph and raises impassable walls everywhere else.
+    pub use_layout_terrain: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -131,4 +134,54 @@ pub fn find_def(kind: InstanceKind) -> &'static InstanceDef {
         .iter()
         .find(|d| d.kind == kind)
         .expect("InstanceKind missing from INSTANCE_DEFS")
+}
+
+// ── Layout SDF ────────────────────────────────────────────────────────────────
+
+/// Half-width of corridors connecting nodes (world units).
+pub const CORRIDOR_RADIUS: f32 = 5.0;
+/// Radius of walkable room circles around Normal nodes.
+pub const ROOM_RADIUS: f32 = 9.0;
+/// Radius of walkable room circles around BossArena nodes.
+pub const ROOM_RADIUS_BOSS: f32 = 4.0;
+/// How far walls rise above the Perlin floor outside the layout.
+pub const WALL_HEIGHT: f32 = 10.0;
+/// Horizontal distance (world units) over which the wall ramps up from 0 to
+/// `WALL_HEIGHT`. Narrower = steeper wall. 1 tile ≈ 84° slope.
+pub const BLEND_DIST: f32 = 1.0;
+
+/// Signed distance from `(px, pz)` to the walkable layout of `def`.
+/// Returns ≤ 0 inside rooms and corridors, > 0 in wall territory.
+/// Only meaningful when `def.use_layout_terrain` is true.
+pub fn layout_sdf(px: f32, pz: f32, def: &InstanceDef) -> f32 {
+    let mut min_d = f32::INFINITY;
+    for node in def.nodes {
+        let (ax, az) = node.position;
+        let r = match node.node_kind {
+            NodeKind::BossArena => ROOM_RADIUS_BOSS,
+            NodeKind::Normal    => ROOM_RADIUS,
+        };
+        // Room circle
+        min_d = min_d.min(((px - ax).powi(2) + (pz - az).powi(2)).sqrt() - r);
+        // Corridor capsule toward each neighbour
+        for &ni in node.connects_to {
+            let (bx, bz) = def.nodes[ni].position;
+            min_d = min_d.min(segment_dist(px, pz, ax, az, bx, bz) - CORRIDOR_RADIUS);
+        }
+    }
+    min_d
+}
+
+/// Distance from point `(px, pz)` to the finite line segment `(ax,az)–(bx,bz)`.
+fn segment_dist(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
+    let dx = bx - ax;
+    let dz = bz - az;
+    let len_sq = dx * dx + dz * dz;
+    if len_sq < 1e-9 {
+        return ((px - ax).powi(2) + (pz - az).powi(2)).sqrt();
+    }
+    let t = (((px - ax) * dx + (pz - az) * dz) / len_sq).clamp(0.0, 1.0);
+    let cx = ax + t * dx;
+    let cz = az + t * dz;
+    ((px - cx).powi(2) + (pz - cz).powi(2)).sqrt()
 }

@@ -64,4 +64,5 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
         },
     ],
     max_players: 4,
+    use_layout_terrain: true,
 };

@@ -33,6 +33,7 @@ impl Plugin for WorldPlugin {
         app.init_resource::<camera::OrbitState>();
         app.init_resource::<SelectedTarget>();
         app.init_resource::<instance::CurrentInstanceTerrain>();
+        app.init_resource::<instance::CurrentInstanceId>();
 
         app.add_systems(
             Startup,
@@ -54,6 +55,7 @@ impl Plugin for WorldPlugin {
             Update,
             (
                 instance::handle_instance_entered,
+                instance::sync_instance_visibility,
                 controller::handle_input,
                 camera::update_orbit_camera,
                 selection::select_on_click,

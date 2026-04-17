@@ -15,7 +15,7 @@ use shared::components::player::{
     Class, GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity,
 };
 use shared::instances::{find_def, sample_height, InstanceKind};
-use shared::messages::{InstanceEnteredMsg, RequestSpawnMsg};
+use shared::messages::{InstanceEnteredMsg, RequestInstanceMsg, RequestSpawnMsg};
 
 use super::instances::{create_instance, populate_instance, remove_player_from_instance, InstanceRegistry};
 
@@ -183,6 +183,94 @@ pub fn process_spawn_requests(
             info!(
                 "[SERVER] Spawned '{}' (client={client_id}) as {player_entity:?} in instance {instance_id}",
                 req.name
+            );
+        }
+    }
+}
+
+/// Handles `RequestInstanceMsg` from already-spawned clients.
+/// Moves the player from their current instance into the requested one,
+/// creating it if this is the first member of their group to enter.
+pub fn process_instance_requests(
+    mut commands: Commands,
+    mut link_query: Query<
+        (Entity, &RemoteId, &PlayerEntityLink, &mut PlayerInstanceLink,
+         &mut MessageReceiver<RequestInstanceMsg>, Option<&mut MessageSender<InstanceEnteredMsg>>),
+        With<Connected>,
+    >,
+    mut instance_id_q: Query<&mut InstanceId>,
+    mut reg: ResMut<InstanceRegistry>,
+) {
+    for (_link_entity, remote_id, entity_link, mut inst_link, mut receiver, mut instance_sender) in
+        link_query.iter_mut()
+    {
+        for req in receiver.receive() {
+            let PeerId::Netcode(client_id) = remote_id.0 else { continue };
+            let peer_id = remote_id.0;
+            let player_entity = entity_link.0;
+            let old_instance_id = inst_link.instance_id;
+
+            // Skip if already in the requested instance kind.
+            if let Some(live) = reg.instances.get(&old_instance_id) {
+                if live.kind == req.kind {
+                    continue;
+                }
+            }
+
+            // Remove player from their current instance (tears it down if now empty).
+            remove_player_from_instance(old_instance_id, peer_id, player_entity, &mut reg, &mut commands);
+
+            let group_id: u32 = 0;
+            let kind = req.kind;
+
+            // Find or create the group's instance of the requested kind.
+            let new_instance_id = if let Some(&id) = reg.group_instances.get(&(group_id, kind)) {
+                id
+            } else {
+                create_instance(kind, group_id, &mut reg)
+            };
+
+            let def = find_def(kind);
+
+            let angle = (client_id % 8) as f32 * std::f32::consts::TAU / 8.0;
+            let (spawn_x, spawn_z) = (angle.cos() * 3.0, angle.sin() * 3.0);
+
+            // Add this client to the new instance registry.
+            let is_first_client = {
+                let live = reg.instances.get_mut(&new_instance_id).expect("instance missing");
+                let first = live.client_ids.is_empty();
+                live.client_ids.push(peer_id);
+                live.entities.push(player_entity);
+                first
+            };
+
+            // Lazily populate mobs when the first client joins.
+            if is_first_client {
+                populate_instance(new_instance_id, &mut reg, &mut commands);
+            }
+
+            // Update the player's InstanceId so instance-based filtering works.
+            if let Ok(mut inst_id) = instance_id_q.get_mut(player_entity) {
+                inst_id.0 = new_instance_id;
+            }
+
+            // Update the link's instance tracking for disconnect cleanup.
+            inst_link.instance_id = new_instance_id;
+
+            // Send InstanceEnteredMsg so the client rebuilds its terrain.
+            if let Some(ref mut sender) = instance_sender {
+                sender.send::<GameChannel>(InstanceEnteredMsg {
+                    instance_id: new_instance_id,
+                    kind,
+                    terrain: def.terrain,
+                    spawn_x,
+                    spawn_z,
+                });
+            }
+
+            info!(
+                "[SERVER] Transferred client={client_id} from instance {old_instance_id} \
+                 to instance {new_instance_id} (kind={kind:?})"
             );
         }
     }

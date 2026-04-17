@@ -4,7 +4,7 @@ use lightyear::prelude::server::*;
 use shared::components::enemy::{EnemyPosition, EnemyVelocity};
 use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition};
-use shared::instances::{find_def, sample_height, InstanceKind};
+use shared::instances::{find_def, layout_sdf, sample_height, InstanceKind};
 
 use super::instances::{create_instance, InstanceRegistry};
 use super::mob_defs::MobBehavior;
@@ -91,12 +91,34 @@ pub fn tick_enemy_walk(
             }
         }
 
-        pos.x += vel.vx * dt;
-        pos.z += vel.vz * dt;
+        let new_x = pos.x + vel.vx * dt;
+        let new_z = pos.z + vel.vz * dt;
 
         if let Some(live) = reg.instances.get(&iid.0) {
             let def = find_def(live.kind);
-            pos.y = sample_height(&live.noise, pos.x, pos.z, &def.terrain) + 1.1;
+
+            // For layout instances confine movement to corridors/rooms.
+            // Try full move first, then axis-by-axis sliding, then stop.
+            let (fx, fz) = if def.use_layout_terrain {
+                if layout_sdf(new_x, new_z, def) <= 0.0 {
+                    (new_x, new_z)
+                } else if layout_sdf(new_x, pos.z, def) <= 0.0 {
+                    (new_x, pos.z)
+                } else if layout_sdf(pos.x, new_z, def) <= 0.0 {
+                    (pos.x, new_z)
+                } else {
+                    (pos.x, pos.z)
+                }
+            } else {
+                (new_x, new_z)
+            };
+
+            pos.x = fx;
+            pos.z = fz;
+            pos.y = sample_height(&live.noise, fx, fz, &def.terrain) + 1.1;
+        } else {
+            pos.x = new_x;
+            pos.z = new_z;
         }
     }
 }

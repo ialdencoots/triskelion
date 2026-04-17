@@ -52,4 +52,5 @@ pub const OVERWORLD: InstanceDef = InstanceDef {
         },
     ],
     max_players: 100,
+    use_layout_terrain: false,
 };

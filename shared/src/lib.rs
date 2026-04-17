@@ -28,7 +28,7 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestSpawnMsg};
+        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg};
 
         // ── Channels ──────────────────────────────────────────────────────────
         app.add_channel::<GameChannel>(ChannelSettings {
@@ -50,6 +50,9 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<RequestSpawnMsg>()
+            .add_direction(NetworkDirection::ClientToServer);
+
+        app.register_message::<RequestInstanceMsg>()
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<PlayerSpawnedMsg>()
@@ -112,12 +115,10 @@ impl Plugin for SharedPlugin {
         app.register_component::<CombatState>();
         app.register_component::<AbilityCooldowns>();
 
-        // ── Components: instance identity (replicated once at spawn) ─────────
-        app.register_component::<InstanceId>()
-            .with_replication_config(ComponentReplicationConfig {
-                replicate_once: true,
-                ..default()
-            });
+        // ── Components: instance identity ────────────────────────────────────
+        // Not replicate_once — players can transition instances mid-session,
+        // and other clients need the updated InstanceId to filter visibility.
+        app.register_component::<InstanceId>();
 
         // ── Components: minigame state (server-authoritative, no prediction) ──
         // These are never predicted on the client — the client renders exactly

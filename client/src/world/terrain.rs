@@ -1,7 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use shared::instances::TerrainConfig;
+use shared::instances::{find_def, InstanceKind};
 
 use super::{ControlScheme, ControlSchemeConfig};
 use super::instance::{build_terrain_mesh_from_config, InstanceSceneTag};
@@ -11,7 +11,7 @@ pub fn spawn_terrain(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let cfg = TerrainConfig::default();
+    let cfg = find_def(InstanceKind::Overworld).terrain;
     let mesh = build_terrain_mesh_from_config(&cfg);
     let collider = Collider::trimesh_from_mesh(&mesh).expect("terrain collider");
 
@@ -45,6 +45,10 @@ pub fn spawn_player(
         basis: TnuaBuiltinWalkConfig {
             float_height: 1.05,
             speed: 6.0,
+            // Slopes steeper than 45° are not treated as walkable ground.
+            // Without this, Tnua floats the player up any surface the sensor
+            // touches, including near-vertical dungeon walls.
+            max_slope: std::f32::consts::FRAC_PI_4,
             ..default()
         },
         jump: TnuaBuiltinJumpConfig {

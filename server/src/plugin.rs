@@ -32,6 +32,7 @@ impl Plugin for ServerGamePlugin {
                 // Spawn requests must be processed before input so the
                 // PlayerEntityLink exists when process_player_inputs runs.
                 connection::process_spawn_requests,
+                connection::process_instance_requests,
                 instances::tick_instance_teardown,
                 enemy::tick_enemy_walk,
                 combat::process_player_inputs,

@@ -4,6 +4,7 @@ pub mod action_bar;
 pub mod enemy_bars;
 pub mod frames;
 pub mod group_frame;
+pub mod instance_button;
 pub mod minigame_anchor;
 
 pub struct HudPlugin;
@@ -17,6 +18,7 @@ impl Plugin for HudPlugin {
                 action_bar::spawn_action_bar,
                 minigame_anchor::spawn_minigame_root,
                 group_frame::spawn_group_frame,
+                instance_button::spawn_instance_button,
             ),
         );
         app.add_observer(enemy_bars::on_enemy_bar_added);
@@ -34,6 +36,7 @@ impl Plugin for HudPlugin {
                 group_frame::update_party_rows,
                 group_frame::handle_party_row_interaction,
                 action_bar::update_stance_highlight,
+                instance_button::handle_instance_button,
             ),
         );
     }
