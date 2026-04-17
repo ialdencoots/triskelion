@@ -76,6 +76,13 @@ pub fn spawn_player(
 }
 
 pub fn spawn_light(mut commands: Commands) {
+    // Strong ambient so dungeon interiors (shadowed by walls) stay visible.
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::WHITE,
+        brightness: 800.0,
+        ..default()
+    });
+
     commands.spawn((
         Name::new("Sun"),
         DirectionalLight {

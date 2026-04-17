@@ -1,7 +1,7 @@
 use avian3d::prelude::{Collider, Sensor};
 use bevy::prelude::*;
 
-use shared::components::enemy::{EnemyMarker, EnemyPosition, EnemyVelocity};
+use shared::components::enemy::{BossMarker, EnemyMarker, EnemyPosition, EnemyVelocity};
 use shared::instances::sample_height;
 
 use super::instance::CurrentInstanceTerrain;
@@ -32,6 +32,7 @@ pub fn on_enemy_replicated(
     mut materials: ResMut<Assets<StandardMaterial>>,
     positions: Query<&EnemyPosition>,
     velocities: Query<&EnemyVelocity>,
+    boss_query: Query<(), With<BossMarker>>,
 ) {
     let entity = trigger.event_target();
     let pos_result = positions.get(entity);
@@ -40,16 +41,32 @@ pub fn on_enemy_replicated(
         .map(|v| Vec2::new(v.vx, v.vz))
         .unwrap_or(Vec2::ZERO);
 
+    let is_boss = boss_query.contains(entity);
+
     info!(
         "[CLIENT] EnemyMarker replicated → entity {entity:?} at {translation:?} \
-         (EnemyPosition found: {})",
+         (EnemyPosition found: {}, boss: {is_boss})",
         pos_result.is_ok()
     );
 
+    let (capsule_mesh, collider, color) = if is_boss {
+        (
+            meshes.add(Capsule3d::new(1.0, 2.0)),
+            Collider::capsule(1.0, 2.0),
+            Color::srgb(0.5, 0.1, 0.7),
+        )
+    } else {
+        (
+            meshes.add(Capsule3d::new(0.4, 1.0)),
+            Collider::capsule(0.4, 1.0),
+            Color::srgb(0.75, 0.15, 0.15),
+        )
+    };
+
     commands.entity(entity).insert((
-        Mesh3d(meshes.add(Capsule3d::new(0.4, 1.0))),
+        Mesh3d(capsule_mesh),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.75, 0.15, 0.15),
+            base_color: color,
             ..default()
         })),
         Transform::from_translation(translation),
@@ -57,7 +74,7 @@ pub fn on_enemy_replicated(
         // Collider required for SpatialQuery::cast_ray click selection.
         // Sensor makes the capsule intangible (no collision response) while
         // still being hittable by raycasts.
-        Collider::capsule(0.4, 1.0),
+        collider,
         Sensor,
     ));
     info!("[CLIENT] Inserted mesh+collider for enemy {entity:?}");
@@ -95,7 +112,7 @@ pub fn apply_server_corrections(
 pub fn sync_enemy_positions(
     time: Res<Time>,
     terrain: Res<CurrentInstanceTerrain>,
-    mut query: Query<(&EnemyDeadReckoning, &mut Transform), With<EnemyMarker>>,
+    mut query: Query<(&EnemyDeadReckoning, Option<&BossMarker>, &mut Transform), With<EnemyMarker>>,
 ) {
     // Log enemy count every 5 seconds.
     let t = time.elapsed_secs();
@@ -107,12 +124,13 @@ pub fn sync_enemy_positions(
         info!("[CLIENT] sync_enemy_positions: {count} enemies tracked at t={t:.1}s");
     }
 
-    for (dr, mut tf) in query.iter_mut() {
+    for (dr, boss, mut tf) in query.iter_mut() {
         // Cap extrapolation at 300 ms to limit drift if the server goes quiet.
         let extrap_dt = (t - dr.base_time).clamp(0.0, 0.3);
         let new_x = dr.base_pos.x + dr.vel.x * extrap_dt;
         let new_z = dr.base_pos.z + dr.vel.y * extrap_dt;
-        let new_y = sample_height(&terrain.noise, new_x, new_z, &terrain.cfg) + 1.1;
+        let floor_offset = if boss.is_some() { 2.2 } else { 1.1 };
+        let new_y = sample_height(&terrain.noise, new_x, new_z, &terrain.cfg) + floor_offset;
         tf.translation = Vec3::new(new_x, new_y, new_z);
     }
 }

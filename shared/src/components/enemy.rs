@@ -37,6 +37,11 @@ impl From<Vec3> for EnemyPosition {
     }
 }
 
+/// Marks a boss-tier enemy. Replicated once at spawn so the client can
+/// render it at a larger scale.
+#[derive(Component, Serialize, Deserialize, Clone, PartialEq)]
+pub struct BossMarker;
+
 /// XZ velocity of an enemy, replicated every tick alongside EnemyPosition.
 ///
 /// Clients use this for dead-reckoning: they extrapolate the enemy's position

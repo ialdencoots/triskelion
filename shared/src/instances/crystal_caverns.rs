@@ -9,13 +9,13 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
         octaves: 6,
         lacunarity: 1.8,
         gain: 0.6,
-        size: 128,
-        tile_scale: 1.0,
+        size: 192,
+        tile_scale: 2.0,
     },
     //       (0) Entry
-    //        ├──(1) Left: golems
-    //        └──(2) Right: goblins + orc
-    //             both → (3) convergence pack → (4) Boss arena
+    //        ├──(1) Left: golems        (56, +40)
+    //        └──(2) Right: goblins/orc  (56, -40)
+    //             both → (3) convergence (110, 0) → (4) Boss arena (150, 0)
     nodes: &[
         PathNode {
             position: (0.0, 0.0),
@@ -24,7 +24,7 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
             connects_to: &[1, 2],
         },
         PathNode {
-            position: (20.0, 12.0),
+            position: (56.0, 40.0),
             pack: Some(PackDef {
                 mobs: &[MobSpawn { kind: MobKind::CrystalGolem, count: 3 }],
                 spread: 6.0,
@@ -33,7 +33,7 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
             connects_to: &[3],
         },
         PathNode {
-            position: (20.0, -12.0),
+            position: (56.0, -40.0),
             pack: Some(PackDef {
                 mobs: &[
                     MobSpawn { kind: MobKind::Goblin, count: 5 },
@@ -45,7 +45,7 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
             connects_to: &[3],
         },
         PathNode {
-            position: (40.0, 0.0),
+            position: (110.0, 0.0),
             pack: Some(PackDef {
                 mobs: &[
                     MobSpawn { kind: MobKind::CrystalGolem, count: 2 },
@@ -57,8 +57,11 @@ pub const CRYSTAL_CAVERNS: InstanceDef = InstanceDef {
             connects_to: &[4],
         },
         PathNode {
-            position: (60.0, 0.0),
-            pack: None,
+            position: (150.0, 0.0),
+            pack: Some(PackDef {
+                mobs: &[MobSpawn { kind: MobKind::CrystalGolemLord, count: 1 }],
+                spread: 0.0,
+            }),
             node_kind: NodeKind::BossArena,
             connects_to: &[],
         },

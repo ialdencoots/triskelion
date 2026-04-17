@@ -21,6 +21,7 @@ pub enum MobKind {
     Orc,
     Troll,
     CrystalGolem,
+    CrystalGolemLord,
 }
 
 // ── Terrain ──────────────────────────────────────────────────────────────────
@@ -143,12 +144,13 @@ pub const CORRIDOR_RADIUS: f32 = 5.0;
 /// Radius of walkable room circles around Normal nodes.
 pub const ROOM_RADIUS: f32 = 9.0;
 /// Radius of walkable room circles around BossArena nodes.
-pub const ROOM_RADIUS_BOSS: f32 = 4.0;
+pub const ROOM_RADIUS_BOSS: f32 = 14.0;
 /// How far walls rise above the Perlin floor outside the layout.
-pub const WALL_HEIGHT: f32 = 10.0;
+pub const WALL_HEIGHT: f32 = 15.0;
 /// Horizontal distance (world units) over which the wall ramps up from 0 to
-/// `WALL_HEIGHT`. Narrower = steeper wall. 1 tile ≈ 84° slope.
-pub const BLEND_DIST: f32 = 1.0;
+/// `WALL_HEIGHT`. Should span at least 1–2 vertex steps (tile_scale) so normals
+/// are captured correctly. At tile_scale=2 and BLEND_DIST=3 the slope is ~82°.
+pub const BLEND_DIST: f32 = 3.0;
 
 /// Signed distance from `(px, pz)` to the walkable layout of `def`.
 /// Returns ≤ 0 inside rooms and corridors, > 0 in wall territory.

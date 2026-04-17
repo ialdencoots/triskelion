@@ -20,7 +20,7 @@ impl Plugin for SharedPlugin {
         use channels::{GameChannel, PositionChannel};
         use components::{
             combat::{AbilityCooldowns, CombatState, Health},
-            enemy::{EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity},
+            enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity},
             instance::InstanceId,
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
@@ -94,6 +94,11 @@ impl Plugin for SharedPlugin {
 
         // ── Components: enemies ───────────────────────────────────────────────
         app.register_component::<EnemyMarker>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
+        app.register_component::<BossMarker>()
             .with_replication_config(ComponentReplicationConfig {
                 replicate_once: true,
                 ..default()
