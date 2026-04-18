@@ -9,27 +9,39 @@ use shared::instances::MobKind;
 /// Server-only AI behavior (never replicated).
 #[derive(Component)]
 pub enum MobBehavior {
-    /// Lissajous-style wandering path unique to each mob.
-    Wander { phase: f32 },
-    /// Chase the nearest player in the same instance within `aggro_range`.
+    /// Lissajous-style patrol that aggros when a player enters `aggro_range`.
+    /// De-aggros and resumes wandering when the player exceeds 1.5× aggro_range.
+    Patrol {
+        phase: f32,
+        aggro_range: f32,
+        melee_range: f32,
+        aggroed: bool,
+    },
+    /// Always chases the nearest player in the same instance within `aggro_range`.
     /// Stop moving when within `melee_range`.
     Aggro { aggro_range: f32, melee_range: f32 },
 }
 
-/// Backwards-compat alias used in existing call sites.
-pub type EnemyWalkState = MobBehavior;
-
-impl MobBehavior {
-    pub fn wander(phase: f32) -> Self {
-        MobBehavior::Wander { phase }
-    }
-}
-
 fn default_behavior_for_kind(kind: MobKind, phase: f32) -> MobBehavior {
     match kind {
-        MobKind::Goblin           => MobBehavior::Wander { phase },
-        MobKind::Orc              => MobBehavior::Wander { phase },
-        MobKind::Troll            => MobBehavior::Wander { phase },
+        MobKind::Goblin => MobBehavior::Patrol {
+            phase,
+            aggro_range: 8.0,
+            melee_range: 1.5,
+            aggroed: false,
+        },
+        MobKind::Orc => MobBehavior::Patrol {
+            phase,
+            aggro_range: 10.0,
+            melee_range: 1.8,
+            aggroed: false,
+        },
+        MobKind::Troll => MobBehavior::Patrol {
+            phase,
+            aggro_range: 7.0,
+            melee_range: 2.0,
+            aggroed: false,
+        },
         MobKind::CrystalGolem     => MobBehavior::Aggro { aggro_range: 12.0, melee_range: 2.0 },
         MobKind::CrystalGolemLord => MobBehavior::Aggro { aggro_range: 16.0, melee_range: 3.0 },
     }
