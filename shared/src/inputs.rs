@@ -24,6 +24,8 @@ pub struct PlayerInput {
     pub abilities: AbilityInput,
     /// Minigame mechanic input events this tick.
     pub minigame: MinigameInput,
+    /// Camera yaw (radians) this tick — used server-side for facing-direction checks.
+    pub facing_yaw: f32,
 }
 
 /// Ability inputs for one tick.

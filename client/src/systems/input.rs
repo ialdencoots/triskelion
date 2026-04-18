@@ -6,6 +6,8 @@ use shared::channels::GameChannel;
 use shared::components::enemy::EnemyMarker;
 use shared::components::player::{PlayerId, RoleStance, SelectedMobOrPlayer};
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
+
+use super::keybindings::ActionBarBindings;
 use shared::instances::sample_height;
 use shared::messages::SelectTargetMsg;
 
@@ -45,8 +47,10 @@ pub fn gather_and_send_input(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     orbit: Res<OrbitState>,
     terrain: Res<CurrentInstanceTerrain>,
+    bindings: Res<ActionBarBindings>,
     player_query: Query<(&Transform, &LinearVelocity), With<PlayerMarker>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
+    mut char_facing: Local<f32>,
 ) {
     let Ok(mut sender) = sender_query.single_mut() else { return };
 
@@ -110,6 +114,14 @@ pub fn gather_and_send_input(
         .map(|(tf, _)| (tf.translation.x, tf.translation.z))
         .unwrap_or((0.0, 0.0));
 
+    // Track character facing from the movement direction; hold the last value when stationary.
+    if move_3d.length_squared() > 0.01 {
+        *char_facing = move_3d.x.atan2(-move_3d.z);
+    }
+
+    let primary_commit = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let secondary_commit = bindings.0.get(3).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),
         x,
@@ -117,6 +129,11 @@ pub fn gather_and_send_input(
         y,
         vy,
         abilities: AbilityInput { enter_stance, exit_stance, ..default() },
-        minigame: MinigameInput::default(),
+        minigame: MinigameInput {
+            action_1: primary_commit,
+            action_2: secondary_commit,
+            ..default()
+        },
+        facing_yaw: *char_facing,
     });
 }

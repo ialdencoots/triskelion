@@ -23,8 +23,9 @@ impl Plugin for SharedPlugin {
             enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
-                arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
-                value_lock::ValueLockState, wave_interference::WaveInterferenceState,
+                arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, dag::DagState,
+                heartbeat::HeartbeatState, value_lock::ValueLockState,
+                wave_interference::WaveInterferenceState,
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
@@ -56,7 +57,8 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<SelectTargetMsg>()
-            .add_direction(NetworkDirection::ClientToServer);
+            .add_direction(NetworkDirection::ClientToServer)
+            .add_map_entities();
 
         app.register_message::<PlayerSpawnedMsg>()
             .add_direction(NetworkDirection::ServerToClient)
@@ -137,6 +139,7 @@ impl Plugin for SharedPlugin {
         // what the server sends. Ghost arc history and other visual flourishes
         // are maintained locally by the client UI systems.
         app.register_component::<ArcState>();
+        app.register_component::<SecondaryArcState>();
         app.register_component::<DagState>();
         app.register_component::<BarFillState>();
         app.register_component::<WaveInterferenceState>();

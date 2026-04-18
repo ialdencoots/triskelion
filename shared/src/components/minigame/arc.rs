@@ -37,11 +37,20 @@ pub struct ArcState {
     pub in_lockout: bool,
     /// Quality [0, 1] of the most recent commit, derived from dot velocity at commit time.
     pub last_commit_quality: f32,
+    /// Theta at the moment of the most recent commit. Set server-side; read by the
+    /// client to push accurate ghost history entries.
+    pub last_commit_theta: f32,
     /// Consecutive commits that landed in the nadir zone without an apex-zone commit.
     /// Resets on an apex-zone commit; mid-zone commits neither increment nor reset.
     /// Primary input to DAG modifier path availability.
     pub streak: u32,
 }
+
+/// Second independent arc for Physical DPS stance (one per weapon).
+/// Structurally identical to `ArcState`; a separate component type so Bevy ECS
+/// can hold both on the same entity. Secondary commit key (W) is deferred.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct SecondaryArcState(pub ArcState);
 
 impl Default for ArcState {
     fn default() -> Self {
@@ -54,6 +63,7 @@ impl Default for ArcState {
             disruption_velocity: 0.0,
             in_lockout: false,
             last_commit_quality: 0.0,
+            last_commit_theta: std::f32::consts::FRAC_PI_2,
             streak: 0,
         }
     }

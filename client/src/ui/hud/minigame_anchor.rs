@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 const MINIGAME_W: f32 = 420.0;
-const MINIGAME_H: f32 = 180.0;
+const MINIGAME_H: f32 = 290.0;
 /// Distance above the action bar (slot height 64 + bottom pad 18 + gap 10).
 const ABOVE_ACTION_BAR: f32 = 64.0 + 18.0 + 10.0;
 

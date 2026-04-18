@@ -1,4 +1,7 @@
 use bevy::prelude::*;
+use bevy::prelude::UiMaterialPlugin;
+
+use crate::ui::arc::ArcMaterial;
 
 pub mod action_bar;
 pub mod enemy_bars;
@@ -13,6 +16,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(UiMaterialPlugin::<ArcMaterial>::default());
         app.init_resource::<target_panel::ThreatDisplayData>();
         app.add_systems(
             Startup,
@@ -20,6 +24,9 @@ impl Plugin for HudPlugin {
                 frames::spawn_frames,
                 action_bar::spawn_action_bar,
                 minigame_anchor::spawn_minigame_root,
+                // Arc overlay must run after minigame_anchor so MinigameRoot exists.
+                crate::ui::arc::spawn_arc_overlay
+                    .after(minigame_anchor::spawn_minigame_root),
                 group_frame::spawn_group_frame,
                 instance_button::spawn_instance_button,
                 selection_indicator::spawn_selection_indicator,
@@ -27,6 +34,7 @@ impl Plugin for HudPlugin {
             ),
         );
         app.add_observer(enemy_bars::on_enemy_bar_added);
+        app.add_observer(crate::ui::arc::on_arc_state_added);
         app.add_observer(group_frame::on_party_member_added);
         app.add_observer(group_frame::on_party_member_removed);
         app.add_systems(
@@ -43,6 +51,7 @@ impl Plugin for HudPlugin {
                 group_frame::update_party_row_fade,
                 group_frame::handle_party_row_interaction,
                 action_bar::update_stance_highlight,
+                action_bar::update_keybind_labels,
                 instance_button::handle_instance_button,
                 // Threat panel: compute first, then apply.
                 target_panel::compute_threat_display,

@@ -1,15 +1,20 @@
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::combat::{AbilityCooldowns, CombatState, ReplicatedThreatList};
+use shared::components::combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList};
+use shared::components::enemy::{EnemyMarker, EnemyPosition};
 use shared::components::instance::InstanceId;
-use shared::components::player::{PlayerId, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance};
+use shared::components::minigame::arc::{ArcState, SecondaryArcState};
+use shared::components::player::{
+    PlayerId, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
+};
 use shared::inputs::PlayerInput;
 use shared::instances::{find_def, sample_height};
 use shared::messages::SelectTargetMsg;
 
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
+use super::minigame::process_arc_commit;
 
 // ── Server-only threat components ────────────────────────────────────────────
 
@@ -69,14 +74,23 @@ pub fn process_player_inputs(
     time: Res<Time>,
     reg: Res<InstanceRegistry>,
     mut link_query: Query<(&PlayerEntityLink, &mut MessageReceiver<PlayerInput>)>,
-    mut player_query: Query<(&mut PlayerPosition, &mut PlayerVelocity, &mut CombatState, Option<&InstanceId>), With<PlayerId>>,
+    mut player_query: Query<(
+        &mut PlayerPosition,
+        &mut PlayerVelocity,
+        &mut CombatState,
+        Option<&InstanceId>,
+        Option<&mut ArcState>,
+        Option<&mut SecondaryArcState>,
+        Option<&PlayerSelectedTarget>,
+    ), With<PlayerId>>,
+    mut enemy_query: Query<(&EnemyPosition, Option<&mut Health>), With<EnemyMarker>>,
 ) {
     let dt = time.delta_secs();
 
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat, iid_opt)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, _secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -105,6 +119,30 @@ pub fn process_player_inputs(
                     Some(stance)
                 };
             }
+
+            // ── Arc commits (Physical class) ───────────────────────────────────
+            if input.minigame.action_1 {
+                info!("[ARC] action_1 received — stance={:?} arc_present={}",
+                    combat.active_stance, arc_opt.is_some());
+            }
+            if input.minigame.action_1 && combat.active_stance.is_some() {
+                if let Some(ref mut arc) = arc_opt {
+                    let was_unlocked = !arc.in_lockout;
+                    info!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
+                        arc.last_commit_quality, input.facing_yaw);
+                    process_arc_commit(arc);
+                    if was_unlocked {
+                        apply_arc_damage(
+                            arc.last_commit_quality,
+                            input.facing_yaw,
+                            &pos,
+                            target_opt,
+                            &mut enemy_query,
+                        );
+                    }
+                }
+            }
+            // action_2 (secondary arc / W key) deferred — no-op for now
         } else {
             // No input this tick — zero XZ motion.
             vel.vx = 0.0;
@@ -205,6 +243,78 @@ pub fn apply_damage_threat(
     } else {
         threat_list.entries.push(ThreatEntry { player_entity: attacker, threat: generated });
     }
+}
+
+// ── Arc damage ────────────────────────────────────────────────────────────────
+
+/// Applies arc commit damage to the player's selected mob target, provided the
+/// player is facing it within the allowed cone.
+///
+/// Damage = BASE_DAMAGE × commit_quality.  Quality is 0–1 based on how close
+/// the dot was to the nadir at commit time (see `process_arc_commit`).
+fn apply_arc_damage(
+    quality: f32,
+    facing_yaw: f32,
+    pos: &PlayerPosition,
+    target: Option<&PlayerSelectedTarget>,
+    enemy_query: &mut Query<(&EnemyPosition, Option<&mut Health>), With<EnemyMarker>>,
+) {
+    const BASE_DAMAGE: f32 = 15.0;
+    /// Melee reach in world units.
+    const MELEE_RANGE: f32 = 3.0;
+    // Allow commits within a 120° cone (cos 60° = 0.5) — forgiving but not trivial.
+    const FACING_COS_MIN: f32 = 0.5;
+
+    let mob_entity = match target.and_then(|t| t.0.as_ref()) {
+        Some(SelectedMobOrPlayer::Mob(e)) => *e,
+        other => {
+            info!("[ARC DMG] no mob target — target={other:?}");
+            return;
+        }
+    };
+
+    let Ok((enemy_pos, health_opt)) = enemy_query.get_mut(mob_entity) else {
+        info!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition; \
+               ensure server was restarted after Health was added to spawn_mob");
+        return;
+    };
+    let Some(mut health) = health_opt else {
+        info!("[ARC DMG] {mob_entity:?} found but has no Health component — restart the server so mobs spawn with Health");
+        return;
+    };
+    if !health.is_alive() {
+        info!("[ARC DMG] target already dead");
+        return;
+    }
+
+    // Distance and facing checks in the XZ plane.
+    let player_xz = Vec3::new(pos.x, 0.0, pos.z);
+    let enemy_xz  = Vec3::new(enemy_pos.x, 0.0, enemy_pos.z);
+    let delta      = enemy_xz - player_xz;
+    let dist       = delta.length();
+
+    if dist > MELEE_RANGE {
+        info!("[ARC DMG] out of range — dist={dist:.2} max={MELEE_RANGE}");
+        return;
+    }
+
+    let to_target = delta.normalize_or_zero();
+    if to_target == Vec3::ZERO {
+        info!("[ARC DMG] player standing on mob");
+        return;
+    }
+
+    let forward = Quat::from_rotation_y(facing_yaw) * Vec3::NEG_Z;
+    let dot = forward.dot(to_target);
+    if dot < FACING_COS_MIN {
+        info!("[ARC DMG] not facing target — dot={dot:.2} min={FACING_COS_MIN}");
+        return;
+    }
+
+    let dmg = BASE_DAMAGE * quality;
+    health.current = (health.current - dmg).max(0.0);
+    info!("[ARC DMG] hit! dmg={dmg:.1} quality={quality:.2} dist={dist:.2} dot={dot:.2} hp={:.1}/{:.1}",
+        health.current, health.max);
 }
 
 /// Distribute healing threat across all engaged mobs in an instance.

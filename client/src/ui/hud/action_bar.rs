@@ -3,21 +3,20 @@ use bevy::prelude::*;
 use shared::components::combat::CombatState;
 use shared::components::player::RoleStance;
 
+use crate::systems::keybindings::ActionBarBindings;
 use crate::world::players::OwnServerEntity;
 
 const SLOT_SIZE: f32 = 64.0;
 const SLOT_GAP: f32 = 6.0;
 const BAR_BOTTOM_PAD: f32 = 18.0;
 
-/// Slots 0–2 are the three role stances; 3–5 are other abilities.
-static SLOTS: &[(&str, &str)] = &[
-    ("1", "Tank"),
-    ("2", "DPS"),
-    ("3", "Heal"),
-    ("4", "Mobility"),
-    ("5", "CC"),
-    ("6", "Taunt"),
-];
+/// Role/function labels for each slot (displayed at the top of stance slots).
+static SLOT_LABELS: &[&str] = &["Tank", "DPS", "Heal", "Secondary", "Primary", ""];
+
+/// Marks the keybind text node for a given slot so it can be updated
+/// when bindings change.
+#[derive(Component)]
+pub struct SlotKeybindText(pub u8);
 
 /// Per-slot stance color used for the active-stance highlight.
 /// Matches the same palette as the group-frame avatars for visual consistency.
@@ -28,8 +27,9 @@ const HEAL_COLOR: Color = Color::srgb(0.25, 0.90, 0.45); // green
 #[derive(Component)]
 pub struct ActionSlot(pub u8);
 
-pub fn spawn_action_bar(mut commands: Commands) {
-    let bar_width = SLOTS.len() as f32 * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP;
+pub fn spawn_action_bar(mut commands: Commands, bindings: Res<ActionBarBindings>) {
+    let num_slots = SLOT_LABELS.len();
+    let bar_width = num_slots as f32 * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP;
 
     commands
         .spawn(Node {
@@ -42,7 +42,8 @@ pub fn spawn_action_bar(mut commands: Commands) {
             ..default()
         })
         .with_children(|bar| {
-            for (i, (key, label)) in SLOTS.iter().enumerate() {
+            for (i, label) in SLOT_LABELS.iter().enumerate() {
+                let key_str = keycode_label(bindings.0.get(i).copied());
                 bar.spawn((
                     ActionSlot(i as u8),
                     Node {
@@ -64,31 +65,84 @@ pub fn spawn_action_bar(mut commands: Commands) {
                     },
                 ))
                 .with_children(|slot| {
-                    // Stance slots (0–2): show a role label at the top.
-                    if i < 3 {
+                    if !label.is_empty() {
                         slot.spawn((
                             Text::new(*label),
                             TextFont { font_size: 10.0, ..default() },
                             TextColor(Color::srgba(0.70, 0.70, 0.80, 0.85)),
                         ));
                     } else {
-                        // Non-stance slots: empty top so keybind stays at bottom.
                         slot.spawn(Node::default());
                     }
 
                     // Keybind label — bottom-right corner.
                     slot.spawn((
+                        SlotKeybindText(i as u8),
                         Node {
                             align_self: AlignSelf::FlexEnd,
                             ..default()
                         },
-                        Text::new(*key),
+                        Text::new(key_str),
                         TextFont { font_size: 10.0, ..default() },
                         TextColor(Color::srgba(0.75, 0.75, 0.75, 0.9)),
                     ));
                 });
             }
         });
+}
+
+/// Syncs keybind text labels whenever `ActionBarBindings` is mutated.
+pub fn update_keybind_labels(
+    bindings: Res<ActionBarBindings>,
+    mut text_q: Query<(&SlotKeybindText, &mut Text)>,
+) {
+    if !bindings.is_changed() {
+        return;
+    }
+    for (slot, mut text) in text_q.iter_mut() {
+        text.0 = keycode_label(bindings.0.get(slot.0 as usize).copied());
+    }
+}
+
+fn keycode_label(key: Option<KeyCode>) -> String {
+    match key {
+        Some(KeyCode::Digit1) => "1".into(),
+        Some(KeyCode::Digit2) => "2".into(),
+        Some(KeyCode::Digit3) => "3".into(),
+        Some(KeyCode::Digit4) => "4".into(),
+        Some(KeyCode::Digit5) => "5".into(),
+        Some(KeyCode::Digit6) => "6".into(),
+        Some(KeyCode::KeyA)   => "A".into(),
+        Some(KeyCode::KeyB)   => "B".into(),
+        Some(KeyCode::KeyC)   => "C".into(),
+        Some(KeyCode::KeyD)   => "D".into(),
+        Some(KeyCode::KeyE)   => "E".into(),
+        Some(KeyCode::KeyF)   => "F".into(),
+        Some(KeyCode::KeyG)   => "G".into(),
+        Some(KeyCode::KeyH)   => "H".into(),
+        Some(KeyCode::KeyI)   => "I".into(),
+        Some(KeyCode::KeyJ)   => "J".into(),
+        Some(KeyCode::KeyK)   => "K".into(),
+        Some(KeyCode::KeyL)   => "L".into(),
+        Some(KeyCode::KeyM)   => "M".into(),
+        Some(KeyCode::KeyN)   => "N".into(),
+        Some(KeyCode::KeyO)   => "O".into(),
+        Some(KeyCode::KeyP)   => "P".into(),
+        Some(KeyCode::KeyQ)   => "Q".into(),
+        Some(KeyCode::KeyR)   => "R".into(),
+        Some(KeyCode::KeyS)   => "S".into(),
+        Some(KeyCode::KeyT)   => "T".into(),
+        Some(KeyCode::KeyU)   => "U".into(),
+        Some(KeyCode::KeyV)   => "V".into(),
+        Some(KeyCode::KeyW)   => "W".into(),
+        Some(KeyCode::KeyX)   => "X".into(),
+        Some(KeyCode::KeyY)   => "Y".into(),
+        Some(KeyCode::KeyZ)   => "Z".into(),
+        Some(KeyCode::Space)  => "Spc".into(),
+        Some(KeyCode::Tab)    => "Tab".into(),
+        None                  => "".into(),
+        _                     => "?".into(),
+    }
 }
 
 /// Highlights the active stance slot (0–2) and dims the other two.

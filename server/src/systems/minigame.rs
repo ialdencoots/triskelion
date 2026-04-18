@@ -1,9 +1,9 @@
-#![allow(unused_variables)]
+use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
 use shared::components::minigame::{
-    arc::ArcState,
+    arc::{ArcState, SecondaryArcState},
     bar_fill::BarFillState,
     dag::DagState,
     heartbeat::HeartbeatState,
@@ -11,13 +11,53 @@ use shared::components::minigame::{
     wave_interference::WaveInterferenceState,
 };
 
+fn tick_arc(arc: &mut ArcState, dt: f32) {
+    arc.disruption_velocity *= (-dt * 0.5_f32).exp();
+    arc.phase += arc.disruption_velocity * dt;
+    arc.time += dt;
+    arc.theta = FRAC_PI_2 + arc.amplitude * (arc.omega * arc.time + arc.phase).sin();
+    if arc.in_lockout {
+        let apex_proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
+        if apex_proximity >= 0.9 {
+            arc.in_lockout = false;
+        }
+    }
+}
+
+/// Evaluate a commit attempt on an arc. No-ops if in lockout.
+pub fn process_arc_commit(arc: &mut ArcState) {
+    if arc.in_lockout {
+        return;
+    }
+    let dot_vel = arc.amplitude * arc.omega * (arc.omega * arc.time + arc.phase).cos()
+        + arc.disruption_velocity;
+    let peak_vel = arc.amplitude * arc.omega;
+    arc.last_commit_quality = (dot_vel.abs() / peak_vel).min(1.0);
+    arc.last_commit_theta = arc.theta;
+    let proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
+    if proximity < 0.2 {
+        arc.streak += 1;
+    } else if proximity > 0.8 {
+        arc.streak = 0;
+    }
+    arc.in_lockout = true;
+}
+
 /// Advance all active Arc states by one server tick.
-///
-/// Per tick:
-/// - Integrate `disruption_velocity` decay.
-/// - Advance `time` and recompute `theta = π/2 + A·sin(ω·t + φ) + disruption offset`.
-/// - Evaluate lockout release (dot reached opposite apex).
-pub fn tick_arc_states(time: Res<Time>, mut query: Query<&mut ArcState>) {}
+pub fn tick_arc_states(time: Res<Time>, mut query: Query<&mut ArcState>) {
+    let dt = time.delta_secs();
+    for mut arc in query.iter_mut() {
+        tick_arc(&mut arc, dt);
+    }
+}
+
+/// Advance all secondary (DPS second-weapon) Arc states by one server tick.
+pub fn tick_secondary_arc_states(time: Res<Time>, mut query: Query<&mut SecondaryArcState>) {
+    let dt = time.delta_secs();
+    for mut secondary in query.iter_mut() {
+        tick_arc(&mut secondary.0, dt);
+    }
+}
 
 /// Advance all active DAG flows by one server tick.
 ///

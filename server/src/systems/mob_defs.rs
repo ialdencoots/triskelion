@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use lightyear::prelude::Replicate;
 use lightyear::connection::network_target::NetworkTarget;
 
-use shared::components::combat::ReplicatedThreatList;
+use shared::components::combat::{Health, ReplicatedThreatList};
 use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::instances::MobKind;
@@ -23,6 +23,16 @@ pub enum MobBehavior {
     /// Always chases the nearest player in the same instance within `aggro_range`.
     /// Stop moving when within `melee_range`.
     Aggro { aggro_range: f32, melee_range: f32 },
+}
+
+fn max_health_for_kind(kind: MobKind) -> f32 {
+    match kind {
+        MobKind::Goblin           =>   80.0,
+        MobKind::Orc              =>  120.0,
+        MobKind::Troll            =>  200.0,
+        MobKind::CrystalGolem     =>  300.0,
+        MobKind::CrystalGolemLord => 1000.0,
+    }
 }
 
 fn default_behavior_for_kind(kind: MobKind, phase: f32) -> MobBehavior {
@@ -82,12 +92,14 @@ pub fn spawn_mob(
 ) -> Entity {
     let name = mob_name_for_kind(kind);
     let behavior = default_behavior_for_kind(kind, phase);
+    let max_hp = max_health_for_kind(kind);
     let mut entity = commands.spawn((
         Name::new(name),
         EnemyMarker,
         EnemyName(name.to_string()),
         EnemyPosition::new(x, y, z),
         EnemyVelocity { vx: 0.0, vz: 0.0 },
+        Health { current: max_hp, max: max_hp },
         behavior,
         ThreatList::default(),
         ReplicatedThreatList::default(),

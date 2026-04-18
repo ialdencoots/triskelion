@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use super::combat::{AbilityCooldowns, CombatState, Health};
 use super::minigame::{
-    arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
-    value_lock::ValueLockState, wave_interference::WaveInterferenceState,
+    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, dag::DagState,
+    heartbeat::HeartbeatState, value_lock::ValueLockState,
+    wave_interference::WaveInterferenceState,
 };
 
 // ── Identity ──────────────────────────────────────────────────────────────────
@@ -167,6 +168,7 @@ pub struct PlayerBaseBundle {
 pub struct PhysicalPlayerBundle {
     pub base: PlayerBaseBundle,
     pub arc: ArcState,
+    pub secondary_arc: SecondaryArcState,
     pub dag: DagState,
 }
 

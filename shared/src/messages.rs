@@ -67,3 +67,11 @@ impl MapEntities for PlayerSpawnedMsg {
         self.player_entity = mapper.get_mapped(self.player_entity);
     }
 }
+
+impl MapEntities for SelectTargetMsg {
+    fn map_entities<M: EntityMapper>(&mut self, mapper: &mut M) {
+        if let Some(SelectedMobOrPlayer::Mob(ref mut e)) = self.0 {
+            *e = mapper.get_mapped(*e);
+        }
+    }
+}
