@@ -7,11 +7,13 @@ pub mod group_frame;
 pub mod instance_button;
 pub mod minigame_anchor;
 pub mod selection_indicator;
+pub mod target_panel;
 
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<target_panel::ThreatDisplayData>();
         app.add_systems(
             Startup,
             (
@@ -21,6 +23,7 @@ impl Plugin for HudPlugin {
                 group_frame::spawn_group_frame,
                 instance_button::spawn_instance_button,
                 selection_indicator::spawn_selection_indicator,
+                target_panel::spawn_target_panel,
             ),
         );
         app.add_observer(enemy_bars::on_enemy_bar_added);
@@ -41,6 +44,10 @@ impl Plugin for HudPlugin {
                 group_frame::handle_party_row_interaction,
                 action_bar::update_stance_highlight,
                 instance_button::handle_instance_button,
+                // Threat panel: compute first, then apply.
+                target_panel::compute_threat_display,
+                target_panel::apply_threat_panel.after(target_panel::compute_threat_display),
+                target_panel::handle_tot_interaction,
             ),
         );
     }

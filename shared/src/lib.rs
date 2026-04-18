@@ -19,16 +19,16 @@ impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         use channels::{GameChannel, PositionChannel};
         use components::{
-            combat::{AbilityCooldowns, CombatState, Health},
-            enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity},
+            combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList},
+            enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
                 arc::ArcState, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
                 value_lock::ValueLockState, wave_interference::WaveInterferenceState,
             },
-            player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity},
+            player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg};
+        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
 
         // ── Channels ──────────────────────────────────────────────────────────
         app.add_channel::<GameChannel>(ChannelSettings {
@@ -53,6 +53,9 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<RequestInstanceMsg>()
+            .add_direction(NetworkDirection::ClientToServer);
+
+        app.register_message::<SelectTargetMsg>()
             .add_direction(NetworkDirection::ClientToServer);
 
         app.register_message::<PlayerSpawnedMsg>()
@@ -110,6 +113,7 @@ impl Plugin for SharedPlugin {
             });
         app.register_component::<EnemyPosition>();
         app.register_component::<EnemyVelocity>();
+        app.register_component::<MobTarget>();
 
         // ── Components: player position/velocity (replicated every tick) ────────
         app.register_component::<PlayerPosition>();
@@ -119,6 +123,9 @@ impl Plugin for SharedPlugin {
         app.register_component::<Health>();
         app.register_component::<CombatState>();
         app.register_component::<AbilityCooldowns>();
+        app.register_component::<ReplicatedThreatList>();
+
+        app.register_component::<PlayerSelectedTarget>();
 
         // ── Components: instance identity ────────────────────────────────────
         // Not replicate_once — players can transition instances mid-session,

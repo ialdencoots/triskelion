@@ -2,7 +2,7 @@ use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::components::player::{Class, Subclass};
+use crate::components::player::{Class, SelectedMobOrPlayer, Subclass};
 use crate::instances::{InstanceKind, TerrainConfig};
 
 // ── Server → Client ──────────────────────────────────────────────────────────
@@ -37,6 +37,12 @@ pub struct InstanceEnteredMsg {
 }
 
 // ── Client → Server ──────────────────────────────────────────────────────────
+
+/// Sent by the client when the local player's selection changes.
+/// Uses `SelectedMobOrPlayer` so player targets are identified by stable `PlayerId`
+/// rather than an entity ID that may differ across clients.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SelectTargetMsg(pub Option<SelectedMobOrPlayer>);
 
 /// First message from a newly-connected client: choose name, class, and subclass.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

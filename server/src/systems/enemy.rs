@@ -1,13 +1,60 @@
 use bevy::prelude::*;
 use lightyear::prelude::server::*;
 
-use shared::components::enemy::{EnemyPosition, EnemyVelocity};
+use shared::components::combat::Health;
+use shared::components::enemy::{EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition};
 use shared::instances::{find_def, layout_sdf, sample_height, InstanceKind};
 
+use super::combat::{ThreatEntry, ThreatList};
 use super::instances::{create_instance, InstanceRegistry};
 use super::mob_defs::MobBehavior;
+
+/// Threat seeded when a mob first aggros onto a player, before any damage is
+/// dealt.  Small enough that a single hit immediately overtakes it.
+const INITIAL_AGGRO_THREAT: f32 = 1.0;
+
+/// Adds an initial threat entry for `entity` if one doesn't already exist.
+fn seed_aggro_threat(threat_list: &mut ThreatList, entity: Entity) {
+    if !threat_list.entries.iter().any(|e| e.player_entity == entity) {
+        threat_list.entries.push(ThreatEntry { player_entity: entity, threat: INITIAL_AGGRO_THREAT });
+    }
+}
+
+/// Selects a chase target from the mob's threat list.  Returns `(dist, dx, dz)`
+/// to the chosen target, or `None` if the threat list has no valid entries
+/// (caller should fall back to nearest-player logic).
+/// Returns `(dist, dx, dz, entity)` for the highest-threat valid target,
+/// or `None` if the threat list is empty or no entries are in range.
+fn select_threat_target(
+    threat_list: &ThreatList,
+    mob_iid: u32,
+    mob_pos: &EnemyPosition,
+    leash_range: f32,
+    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+) -> Option<(f32, f32, f32, Entity)> {
+    if threat_list.entries.is_empty() {
+        return None;
+    }
+    threat_list.entries.iter()
+        .filter_map(|entry| {
+            let Ok((entity, _, ppos, piid, health)) = player_query.get(entry.player_entity) else { return None };
+            if piid.0 != mob_iid { return None; }
+            if !health.is_alive() { return None; }
+            let dx = ppos.x - mob_pos.x;
+            let dz = ppos.z - mob_pos.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            if dist > leash_range { return None; }
+            Some((entry.threat, dist, dx, dz, entity))
+        })
+        .max_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+        })
+        .map(|(_, dist, dx, dz, entity)| (dist, dx, dz, entity))
+}
 
 /// Fires when the NetcodeServer reports `Started`.
 /// Creates the group-0 overworld instance and populates it with mobs.
@@ -38,14 +85,32 @@ const SEPARATION_RADIUS: f32 = 3.5;
 // Maximum contribution of the separation force relative to the unit chase direction.
 const SEPARATION_STRENGTH: f32 = 1.2;
 
+/// Sets velocity for a mob that has reached melee range.
+///
+/// Projects the separation force onto the tangent perpendicular to the
+/// mob→target direction, so mobs can only shuffle sideways around the ring —
+/// not drift outward past melee range. Stops entirely once settled.
+fn melee_spread(vel: &mut EnemyVelocity, sep: Vec2, to_target: Vec2) {
+    const SETTLE_THRESHOLD: f32 = 0.15;
+    let radial = to_target.normalize_or_zero();
+    let sep_tangential = sep - radial * sep.dot(radial);
+    if sep_tangential.length() > SETTLE_THRESHOLD {
+        vel.vx = sep_tangential.x * SPEED * 0.5;
+        vel.vz = sep_tangential.y * SPEED * 0.5;
+    } else {
+        vel.vx = 0.0;
+        vel.vz = 0.0;
+    }
+}
+
 /// Advances all mob AI each fixed tick.
 /// Dispatches on `MobBehavior`: Wander uses Lissajous paths, Aggro chases
-/// the nearest player in the same instance.
+/// the highest-threat player in the same instance (nearest as fallback).
 pub fn tick_enemy_walk(
     time: Res<Time>,
     reg: Res<InstanceRegistry>,
-    mut mob_query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &mut MobBehavior, &InstanceId)>,
-    player_query: Query<(&PlayerPosition, &InstanceId), With<PlayerId>>,
+    mut mob_query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &mut MobBehavior, &InstanceId, &mut ThreatList, &mut MobTarget)>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -61,21 +126,22 @@ pub fn tick_enemy_walk(
     // movement so all mobs react to the same frame state.
     let mob_positions: Vec<(Vec2, u32)> = mob_query
         .iter()
-        .map(|(pos, _, _, iid)| (Vec2::new(pos.x, pos.z), iid.0))
+        .map(|(pos, _, _, iid, _, _)| (Vec2::new(pos.x, pos.z), iid.0))
         .collect();
 
-    for (mut pos, mut vel, mut behavior, iid) in mob_query.iter_mut() {
+    for (mut pos, mut vel, mut behavior, iid, mut threat_list, mut mob_target) in mob_query.iter_mut() {
         match &mut *behavior {
             MobBehavior::Patrol { phase, aggro_range, melee_range, aggroed } => {
-                // Find nearest player in the same instance.
+                // Find nearest player for aggro trigger (still proximity-based).
+                // Includes Entity so we can seed initial threat on first aggro.
                 let nearest = player_query
                     .iter()
-                    .filter(|(_, pid)| pid.0 == iid.0)
-                    .map(|(ppos, _)| {
+                    .filter(|(_, _, _, piid, _)| piid.0 == iid.0)
+                    .map(|(entity, _, ppos, _, _)| {
                         let dx = ppos.x - pos.x;
                         let dz = ppos.z - pos.z;
                         let dist = (dx * dx + dz * dz).sqrt();
-                        (dist, dx, dz)
+                        (dist, dx, dz, entity)
                     })
                     .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
@@ -83,14 +149,17 @@ pub fn tick_enemy_walk(
                 // so mobs don't flicker when the player sits on the threshold.
                 let leash_range = *aggro_range * 1.5;
                 match nearest {
-                    Some((dist, _, _)) if !*aggroed && dist <= *aggro_range => {
+                    Some((dist, _, _, entity)) if !*aggroed && dist <= *aggro_range => {
                         *aggroed = true;
+                        seed_aggro_threat(&mut threat_list, entity);
                     }
-                    Some((dist, _, _)) if *aggroed && dist > leash_range => {
+                    Some((dist, _, _, _)) if *aggroed && dist > leash_range => {
                         *aggroed = false;
+                        threat_list.entries.clear();
                     }
                     None => {
                         *aggroed = false;
+                        threat_list.entries.clear();
                     }
                     _ => {}
                 }
@@ -108,22 +177,29 @@ pub fn tick_enemy_walk(
                     }
                     let sep = sep.clamp_length_max(1.0) * SEPARATION_STRENGTH;
 
-                    if let Some((dist, dx, dz)) = nearest {
+                    // Chase highest-threat player; fall back to nearest.
+                    let target = select_threat_target(&threat_list, iid.0, &pos, leash_range, &player_query)
+                        .or(nearest);
+
+                    mob_target.0 = target.and_then(|(_, _, _, e)| {
+                        player_query.get(e).ok().map(|(_, pid, _, _, _)| pid.0)
+                    });
+
+                    if let Some((dist, dx, dz, _)) = target {
                         if dist > *melee_range {
                             let chase = Vec2::new(dx, dz).normalize_or_zero();
                             let dir = (chase + sep).normalize_or_zero();
                             vel.vx = dir.x * SPEED;
                             vel.vz = dir.y * SPEED;
                         } else {
-                            let spread = sep.normalize_or_zero();
-                            vel.vx = spread.x * SPEED * 0.5;
-                            vel.vz = spread.y * SPEED * 0.5;
+                            melee_spread(&mut vel, sep, Vec2::new(dx, dz));
                         }
                     } else {
                         vel.vx = 0.0;
                         vel.vz = 0.0;
                     }
                 } else {
+                    mob_target.0 = None;
                     // Resume Lissajous patrol.
                     let dx = (t * 0.4 + *phase).sin();
                     let dz = (t * 0.3 + *phase * 1.7).cos();
@@ -133,18 +209,6 @@ pub fn tick_enemy_walk(
                 }
             }
             MobBehavior::Aggro { aggro_range, melee_range } => {
-                // Find nearest player in the same instance.
-                let nearest = player_query
-                    .iter()
-                    .filter(|(_, pid)| pid.0 == iid.0)
-                    .map(|(ppos, _)| {
-                        let dx = ppos.x - pos.x;
-                        let dz = ppos.z - pos.z;
-                        let dist = (dx * dx + dz * dz).sqrt();
-                        (dist, dx, dz)
-                    })
-                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
                 // Separation force: push away from nearby mob neighbours so
                 // the pack fans out around the player rather than stacking.
                 let my_xz = Vec2::new(pos.x, pos.z);
@@ -162,28 +226,50 @@ pub fn tick_enemy_walk(
                 // Clamp so a dense crowd doesn't let separation overpower the chase.
                 let sep = sep.clamp_length_max(1.0) * SEPARATION_STRENGTH;
 
-                if let Some((dist, dx, dz)) = nearest {
-                    if dist <= *aggro_range {
-                        if dist > *melee_range {
-                            // Chase + spread sideways when closing in.
-                            let chase = Vec2::new(dx, dz).normalize_or_zero();
-                            let dir = (chase + sep).normalize_or_zero();
-                            vel.vx = dir.x * SPEED;
-                            vel.vz = dir.y * SPEED;
-                        } else {
-                            // At melee range: shuffle sideways to spread around
-                            // the player rather than freezing in a pile.
-                            let spread = sep.normalize_or_zero();
-                            vel.vx = spread.x * SPEED * 0.5;
-                            vel.vz = spread.y * SPEED * 0.5;
-                        }
+                // Nearest player within aggro_range for proximity fallback.
+                // Includes Entity so we can seed initial threat on first engage.
+                let nearest_in_range = player_query
+                    .iter()
+                    .filter(|(_, _, _, piid, _)| piid.0 == iid.0)
+                    .map(|(entity, _, ppos, _, _)| {
+                        let dx = ppos.x - pos.x;
+                        let dz = ppos.z - pos.z;
+                        let dist = (dx * dx + dz * dz).sqrt();
+                        (dist, dx, dz, entity)
+                    })
+                    .filter(|(dist, _, _, _)| *dist <= *aggro_range)
+                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+                // Seed initial threat when first engaging (threat list empty).
+                if threat_list.entries.is_empty() {
+                    if let Some((_, _, _, entity)) = nearest_in_range {
+                        seed_aggro_threat(&mut threat_list, entity);
+                    }
+                }
+
+                // Chase highest-threat player; fall back to nearest in range.
+                let target = select_threat_target(&threat_list, iid.0, &pos, *aggro_range, &player_query)
+                    .or(nearest_in_range);
+
+                mob_target.0 = target.and_then(|(_, _, _, e)| {
+                    player_query.get(e).ok().map(|(_, pid, _, _, _)| pid.0)
+                });
+
+                if let Some((dist, dx, dz, _)) = target {
+                    if dist > *melee_range {
+                        // Chase + spread sideways when closing in.
+                        let chase = Vec2::new(dx, dz).normalize_or_zero();
+                        let dir = (chase + sep).normalize_or_zero();
+                        vel.vx = dir.x * SPEED;
+                        vel.vz = dir.y * SPEED;
                     } else {
-                        vel.vx = 0.0;
-                        vel.vz = 0.0;
+                        melee_spread(&mut vel, sep, Vec2::new(dx, dz));
                     }
                 } else {
                     vel.vx = 0.0;
                     vel.vz = 0.0;
+                    threat_list.entries.clear();
+                    mob_target.0 = None;
                 }
             }
         }

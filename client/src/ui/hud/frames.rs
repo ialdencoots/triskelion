@@ -7,14 +7,14 @@ use shared::components::player::PlayerName;
 use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
-const FRAME_W: f32 = 220.0;
-const FRAME_H: f32 = 56.0;
+pub const FRAME_W: f32 = 220.0;
+pub const FRAME_H: f32 = 56.0;
 const AVATAR_SIZE: f32 = 48.0;
 /// Horizontal gap from screen center to the near edge of each frame.
-const CHAR_OFFSET: f32 = 80.0;
+pub const CHAR_OFFSET: f32 = 80.0;
 /// Vertical position: percentage of window height where the frame top sits.
 /// ~55 % places the frames slightly below center, near where the player appears.
-const FRAME_TOP_PCT: f32 = 55.0;
+pub const FRAME_TOP_PCT: f32 = 55.0;
 
 // ── Marker components ───────────────────────────────────────────────────────
 

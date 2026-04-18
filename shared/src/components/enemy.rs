@@ -51,3 +51,9 @@ pub struct EnemyVelocity {
     pub vx: f32,
     pub vz: f32,
 }
+
+/// The `PlayerId` of the player this mob is currently targeting.
+/// `None` when the mob is not aggroed or has no valid target.
+/// Replicated so clients can display target-of-target when inspecting a mob.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct MobTarget(pub Option<u64>);

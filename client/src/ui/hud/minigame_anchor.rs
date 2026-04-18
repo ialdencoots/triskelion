@@ -25,7 +25,7 @@ pub fn spawn_minigame_root(mut commands: Commands) {
             border: UiRect::all(Val::Px(1.0)),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.03, 0.03, 0.08, 0.75)),
+        BackgroundColor(Color::srgba(0.03, 0.03, 0.08, 0.35)),
         BorderColor {
             top:    Color::srgba(0.35, 0.35, 0.50, 0.5),
             bottom: Color::srgba(0.35, 0.35, 0.50, 0.5),

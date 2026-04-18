@@ -26,6 +26,7 @@ impl Plugin for ClientGamePlugin {
 
         // Gather local input every frame and send to server.
         app.add_systems(Update, input::gather_and_send_input);
+        app.add_systems(Update, input::send_target_selection);
 
         // Send RequestSpawnMsg as soon as the Netcode handshake completes.
         app.add_observer(on_client_connected);

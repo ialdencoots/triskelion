@@ -3,13 +3,34 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 
 use shared::channels::GameChannel;
-use shared::components::player::RoleStance;
+use shared::components::enemy::EnemyMarker;
+use shared::components::player::{PlayerId, RoleStance, SelectedMobOrPlayer};
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
 use shared::instances::sample_height;
+use shared::messages::SelectTargetMsg;
 
 use crate::world::camera::OrbitState;
 use crate::world::instance::CurrentInstanceTerrain;
+use crate::world::selection::SelectedTarget;
 use crate::world::terrain::PlayerMarker;
+
+/// Watches `SelectedTarget` for changes and notifies the server when the local
+/// player selects or deselects an enemy mob.
+pub fn send_target_selection(
+    selected: Res<SelectedTarget>,
+    enemy_q: Query<(), With<EnemyMarker>>,
+    player_id_q: Query<&PlayerId>,
+    mut sender_q: Query<&mut MessageSender<SelectTargetMsg>>,
+) {
+    if !selected.is_changed() { return; }
+    let Ok(mut sender) = sender_q.single_mut() else { return };
+    let payload = match selected.0 {
+        None => None,
+        Some(e) if enemy_q.contains(e) => Some(SelectedMobOrPlayer::Mob(e)),
+        Some(e) => player_id_q.get(e).ok().map(|p| SelectedMobOrPlayer::Player(p.0)),
+    };
+    sender.send::<GameChannel>(SelectTargetMsg(payload));
+}
 
 /// Reads keyboard/gamepad state each frame, constructs a `PlayerInput`, and
 /// sends it to the server as a Lightyear message.

@@ -36,7 +36,12 @@ impl Plugin for ServerGamePlugin {
                 instances::tick_instance_teardown,
                 enemy::tick_enemy_walk,
                 combat::process_player_inputs,
+                combat::process_target_selections,
                 combat::tick_ability_cooldowns,
+                // Stance multipliers must update before sync so threat display
+                // reflects the current role immediately.
+                combat::apply_stance_multipliers,
+                combat::sync_replicated_threat_list,
                 minigame::tick_arc_states,
                 minigame::tick_dag_states,
                 minigame::tick_bar_fill_states,

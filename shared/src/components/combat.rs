@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 
 use super::player::RoleStance;
 
+/// Replicated threat table for a mob — sent to clients for threat display.
+/// Uses PlayerId (u64) instead of server-internal Entity.
+/// Entries are sorted descending by threat value.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct ReplicatedThreatList {
+    pub entries: Vec<(u64, f32)>,
+}
+
 /// Hit points. Replicated server-to-client; interpolated for smooth display.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Health {

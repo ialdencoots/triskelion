@@ -2,9 +2,12 @@ use bevy::prelude::*;
 use lightyear::prelude::Replicate;
 use lightyear::connection::network_target::NetworkTarget;
 
-use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity};
+use shared::components::combat::ReplicatedThreatList;
+use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::instances::MobKind;
+
+use super::combat::ThreatList;
 
 /// Server-only AI behavior (never replicated).
 #[derive(Component)]
@@ -86,6 +89,9 @@ pub fn spawn_mob(
         EnemyPosition::new(x, y, z),
         EnemyVelocity { vx: 0.0, vz: 0.0 },
         behavior,
+        ThreatList::default(),
+        ReplicatedThreatList::default(),
+        MobTarget::default(),
         InstanceId(instance_id),
         Replicate::to_clients(NetworkTarget::All),
     ));

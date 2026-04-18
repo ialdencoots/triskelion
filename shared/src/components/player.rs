@@ -96,6 +96,22 @@ pub enum Stance {
     Overgrowth,
 }
 
+/// The discriminated target stored in `PlayerSelectedTarget` and `SelectTargetMsg`.
+///
+/// Mob targets use the server entity (stable across all clients because mobs are
+/// purely server-replicated).  Player targets use the stable `PlayerId` (u64)
+/// instead of an entity ID, because player entity IDs can differ between clients.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum SelectedMobOrPlayer {
+    Mob(Entity),
+    Player(u64),
+}
+
+/// The entity or player this player currently has targeted. Replicated so other
+/// clients can show target-of-target information.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct PlayerSelectedTarget(pub Option<SelectedMobOrPlayer>);
+
 // ── Position / Velocity ───────────────────────────────────────────────────────
 
 /// Server-authoritative world-space position, replicated every tick.

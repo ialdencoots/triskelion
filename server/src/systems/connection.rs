@@ -12,11 +12,13 @@ use shared::components::minigame::{
     value_lock::ValueLockState, wave_interference::WaveInterferenceState,
 };
 use shared::components::player::{
-    Class, GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSubclass, PlayerVelocity,
+    Class, GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget,
+    PlayerSubclass, PlayerVelocity,
 };
 use shared::instances::{find_def, sample_height, InstanceKind};
 use shared::messages::{InstanceEnteredMsg, RequestInstanceMsg, RequestSpawnMsg};
 
+use super::combat::ThreatModifiers;
 use super::instances::{create_instance, populate_instance, remove_player_from_instance, InstanceRegistry};
 
 /// Links a client's network link entity to its spawned player entity and instance.
@@ -144,6 +146,8 @@ pub fn process_spawn_requests(
                 Health::default(),
                 CombatState::default(),
                 AbilityCooldowns::default(),
+                ThreatModifiers::default(),
+                PlayerSelectedTarget::default(),
                 InstanceId(instance_id),
                 Replicate::to_clients(NetworkTarget::All),
             )).id();
