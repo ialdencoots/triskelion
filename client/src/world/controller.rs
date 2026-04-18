@@ -20,20 +20,28 @@ pub fn handle_input(
     let cam_forward = yaw_rot * Vec3::NEG_Z;
     let cam_right = yaw_rot * Vec3::X;
 
-    let move_dir = if both_mouse {
-        cam_forward
+    let (move_dir, face_dir) = if both_mouse {
+        // Backward key cancels the mouse-button forward; lateral keys still apply.
+        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { cam_forward };
+        let mut dir = forward;
+        if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
+        let movement = if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO };
+        // Always face camera direction regardless of which keys are held.
+        (movement, cam_forward)
     } else {
         let mut dir = Vec3::ZERO;
         if keyboard.pressed(KeyCode::KeyE) { dir += cam_forward; }
         if keyboard.pressed(KeyCode::KeyD) { dir -= cam_forward; }
         if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
         if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
-        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
+        let movement = if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO };
+        (movement, movement)
     };
 
-    // Rotate character to face movement direction
-    if move_dir.length_squared() > 0.01 {
-        let target_yaw = move_dir.x.atan2(move_dir.z);
+    // Rotate character to face the appropriate direction.
+    if face_dir.length_squared() > 0.01 {
+        let target_yaw = (-face_dir.x).atan2(-face_dir.z);
         transform.rotation = Quat::from_rotation_y(target_yaw);
     }
 
