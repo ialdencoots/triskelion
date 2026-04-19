@@ -47,9 +47,9 @@ impl UiMaterial for ArcMaterial {
 
 pub const MAX_GHOST_ENTRIES: usize = 6;
 
-/// Baseline slope (dy/dx) for the 22.5° DPS arc tilt. Applied with opposite
+/// Rotation angle (radians) for the 22.5° DPS arc tilt. Applied with opposite
 /// signs on primary (−) and secondary (+) so they V toward the center.
-const DPS_TILT: f32 = 0.41421356_f32; // tan(π/8) = tan(22.5°)
+const DPS_TILT: f32 = std::f32::consts::FRAC_PI_8; // π/8 = 22.5°
 
 /// Client-local record of recent commit positions. Not replicated — maintained
 /// by detecting `in_lockout` false→true transitions in the render system.
@@ -219,20 +219,22 @@ pub fn render_arc(
             }
         }
 
+        // Clear secondary ghost on any stance change, mirroring primary ghost behavior.
+        if let Some(ref mut sec_ghost) = sec_ghost_opt {
+            if sec_ghost.0.prev_stance != combat.active_stance {
+                sec_ghost.0.entries.clear();
+                sec_ghost.0.prev_in_lockout = false;
+                sec_ghost.0.commit_pulse = 0.0;
+                sec_ghost.0.commit_theta = std::f32::consts::FRAC_PI_2;
+            }
+            sec_ghost.0.prev_stance = combat.active_stance;
+        }
+
         if let Ok((mut vis, mat_handle, computed)) = secondary_q.single_mut() {
             if in_dps && in_stance {
                 *vis = Visibility::Visible;
                 if let Some(secondary) = secondary_opt {
-                    // Update ghost history when available (may be absent for a frame
-                    // if the observer hasn't fired yet on fresh replication).
                     if let Some(ref mut sec_ghost) = sec_ghost_opt {
-                        if sec_ghost.0.prev_stance != combat.active_stance {
-                            sec_ghost.0.entries.clear();
-                            sec_ghost.0.prev_in_lockout = false;
-                            sec_ghost.0.commit_pulse = 0.0;
-                            sec_ghost.0.commit_theta = std::f32::consts::FRAC_PI_2;
-                        }
-                        sec_ghost.0.prev_stance = combat.active_stance;
                         if !sec_ghost.0.prev_in_lockout && secondary.0.in_lockout {
                             sec_ghost.0.entries.insert(0, secondary.0.last_commit_theta);
                             sec_ghost.0.entries.truncate(MAX_GHOST_ENTRIES);
