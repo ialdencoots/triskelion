@@ -31,7 +31,8 @@ const ARC_THETA_MIN:  f32 = 0.39270;  // π/8
 const ARC_THETA_MAX:  f32 = 2.74889;  // 7π/8
 const ARC_THETA_SPAN: f32 = 2.35619;  // 3π/4
 
-const STACK_OFFSET: f32 = 22.0;   // vertical px between successive arc baselines
+const STACK_OFFSET:      f32 = 22.0;   // vertical px between successive arc baselines
+const SIN_ARC_THETA_MIN: f32 = 0.38268; // sin(π/8) — height of arc endpoints above nadir
 const N_GHOSTS:     i32 = 8;
 const TRACK_W:      f32 = 3.2;    // rail half-width in pixels
 const DOT_R:        f32 = 11.0;   // pendulum dot radius
@@ -231,6 +232,12 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let half_w = node_w * 0.452;
     let depth  = node_w * 0.310;
 
+    // Shift the main arc downward so rotated endpoints stay within the node bounds.
+    // For tilt=0 this is 0; for large tilts it compensates the upward endpoint swing.
+    let tilt_sin = sin(tilt);
+    let tilt_cos = cos(tilt);
+    let y_offset = max(0.0, half_w * abs(tilt_sin) - depth * SIN_ARC_THETA_MIN * tilt_cos);
+
     var color = vec4<f32>(0.0);
 
     // Render ghosts back-to-front (oldest = most transparent, rendered first).
@@ -252,7 +259,7 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
 
     // Main arc rendered last (on top). Skipped when commit.z > 0.5 (ghost-only mode).
     if params.commit.z < 0.5 {
-        let main_c = sine_arc_layer(px, py, cx, 0.0, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true, tilt);
+        let main_c = sine_arc_layer(px, py, cx, y_offset, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true, tilt);
         color = blend_over(main_c, color);
     }
 

@@ -51,7 +51,10 @@ const MAX_CENTRAL_GHOST_ENTRIES: usize = 8;
 
 /// Rotation angle (radians) for the 22.5° DPS arc tilt. Applied with opposite
 /// signs on primary (−) and secondary (+) so they V toward the center.
-const DPS_TILT: f32 = std::f32::consts::FRAC_PI_3; // π/8 = 22.5°
+const DPS_TILT: f32 = std::f32::consts::FRAC_PI_3; // π/3 = 60°
+
+/// sin(ARC_THETA_MIN) = sin(π/8) — mirrors the shader constant for computing offsets.
+const SIN_ARC_THETA_MIN: f32 = 0.38268;
 
 /// Client-local record of recent commit positions. Not replicated — maintained
 /// by detecting `in_lockout` false→true transitions in the render system.
@@ -158,7 +161,7 @@ pub fn spawn_arc_overlay(
                 width: Val::Percent(50.0),
                 height: Val::Percent(100.0),
                 position_type: PositionType::Absolute,
-                left: Val::Percent(5.0),
+                left: Val::Percent(13.0),
                 top: Val::Px(0.0),
                 ..default()
             },
@@ -258,7 +261,7 @@ pub fn render_arc(
         if let Ok((mut vis, mut node, mat_handle, computed)) = primary_q.single_mut() {
             *vis = if in_stance { Visibility::Visible } else { Visibility::Hidden };
             node.width = if in_dps { Val::Percent(50.0) } else { Val::Percent(100.0) };
-            node.left  = if in_dps { Val::Percent(45.0) } else { Val::Px(0.0) };
+            node.left  = if in_dps { Val::Percent(37.0) } else { Val::Px(0.0) };
 
             if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                 let size = computed.size();
@@ -337,8 +340,13 @@ pub fn render_arc(
                     let size = computed.size();
                     let entries =
                         central_opt.as_ref().map_or(&[][..], |c| c.entries.as_slice());
-                    // Offset just enough to clear the tilted main arc nadir + dot aura.
-                    let ghost_y_offset = size.x * 0.22;
+                    // Dynamic offset: mirrors the shader's arc y_offset + nadir + aura.
+                    let depth_px  = size.x * 0.310;
+                    let half_w_px = size.x * 0.452;
+                    let t_sin     = DPS_TILT.sin();
+                    let t_cos     = DPS_TILT.cos();
+                    let arc_y_off = (half_w_px * t_sin - depth_px * SIN_ARC_THETA_MIN * t_cos).max(0.0);
+                    let ghost_y_offset = arc_y_off + t_cos * depth_px + 23.0;
                     mat.params =
                         central_ghost_params(entries, arc.amplitude, size.x, size.y, t, ghost_y_offset);
                 }
