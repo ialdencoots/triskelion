@@ -16,9 +16,10 @@
 struct ArcParams {
     core:       vec4<f32>,   // x=theta, y=amplitude, z=in_lockout(0/1), w=ghost_count
     ghost_a:    vec4<f32>,   // frozen commit thetas 0-3  (0 = most recent)
-    ghost_b:    vec4<f32>,   // frozen commit thetas 4-5  (z,w unused)
-    dimensions: vec4<f32>,   // x=node_w_px, y=node_h_px, z=time_secs, w=unused
-    commit:     vec4<f32>,   // x=pulse(1→0 after commit), y=physical theta of last commit
+    ghost_b:    vec4<f32>,   // frozen commit thetas 4-7
+    dimensions: vec4<f32>,   // x=node_w_px, y=node_h_px, z=time_secs, w=tilt (or source_cx_offset in central mode)
+    commit:     vec4<f32>,   // x=pulse(1→0 after commit), y=physical theta / source tilt, z=hide_main, w=ghost_y_offset
+    extra:      vec4<f32>,   // x=scroll_carry (unfinished scroll from interrupted animations)
 }
 
 @group(1) @binding(0) var<uniform> params: ArcParams;
@@ -247,8 +248,9 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
         let gt      = ghost_theta(i);
         // scroll_t runs 1→0 at twice the speed of commit_pulse, finishing halfway through.
         let scroll_t = saturate(commit_pulse * 2.0 - 1.0);
-        // Animate ghosts scrolling down on each new commit.
-        let ghost_cy = (f32(i + 1) - scroll_t) * STACK_OFFSET + params.commit.w;
+        // scroll_carry folds in any unfinished scroll from a previously interrupted animation.
+        // Total travel = (1 + scroll_carry) slots, so ghosts continue from wherever they were.
+        let ghost_cy = (f32(i + 1) - (1.0 + params.extra.x) * scroll_t) * STACK_OFFSET + params.commit.w;
         // Opacity: most-recent ghost 0 = 0.65, oldest ghost 7 ≈ 0.16.
         let opacity = 0.65 - f32(i) * 0.07;
 

@@ -29,6 +29,8 @@ pub struct ArcParams {
     pub dimensions: Vec4,
     /// x = commit_pulse (1→0 over ~0.5 s), y = physical theta of last commit
     pub commit: Vec4,
+    /// x = scroll_carry (accumulated un-finished scroll from interrupted animations)
+    pub extra: Vec4,
 }
 
 #[derive(AsBindGroup, Asset, TypePath, Debug, Clone, Default)]
@@ -112,6 +114,9 @@ pub struct CentralGhostHistory {
     pub commit_pulse: f32,
     /// Source tilt (±DPS_TILT) of the most recent commit, drives animation start.
     pub last_commit_tilt: f32,
+    /// Remaining scroll displacement (in STACK_OFFSET units) carried over from an
+    /// animation that was interrupted by a new commit. Prevents teleporting.
+    pub scroll_carry: f32,
 }
 
 impl Default for CentralGhostHistory {
@@ -121,6 +126,7 @@ impl Default for CentralGhostHistory {
             prev_stance: None,
             commit_pulse: 0.0,
             last_commit_tilt: 0.0,
+            scroll_carry: 0.0,
         }
     }
 }
@@ -251,6 +257,7 @@ pub fn render_arc(
             if let Some(ref mut central) = central_opt {
                 central.entries.clear();
                 central.commit_pulse = 0.0;
+                central.scroll_carry = 0.0;
             }
         }
         ghost.prev_stance = combat.active_stance;
@@ -266,6 +273,9 @@ pub fn render_arc(
             ghost.commit_theta = arc.last_commit_theta;
             ghost.commit_pulse = 1.0;
             if let Some(ref mut central) = central_opt {
+                // Carry over any unfinished scroll so ghosts don't teleport.
+                let old_scroll_t = (central.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
+                central.scroll_carry = old_scroll_t * (1.0 + central.scroll_carry);
                 central.entries.insert(0, arc.last_commit_theta);
                 central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
                 central.commit_pulse = 1.0;
@@ -320,6 +330,8 @@ pub fn render_arc(
                             sec_ghost.0.commit_theta = secondary.0.last_commit_theta;
                             sec_ghost.0.commit_pulse = 1.0;
                             if let Some(ref mut central) = central_opt {
+                                let old_scroll_t = (central.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
+                                central.scroll_carry = old_scroll_t * (1.0 + central.scroll_carry);
                                 central.entries.insert(0, secondary.0.last_commit_theta);
                                 central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
                                 central.commit_pulse = 1.0;
@@ -369,13 +381,15 @@ pub fn render_arc(
                         central_opt.as_ref().map_or(0.0, |c| c.commit_pulse);
                     let last_commit_tilt =
                         central_opt.as_ref().map_or(0.0, |c| c.last_commit_tilt);
+                    let scroll_carry =
+                        central_opt.as_ref().map_or(0.0, |c| c.scroll_carry);
                     // Dynamic offset: mirrors the shader's arc y_offset + nadir + aura.
                     let depth_px  = size.x * 0.310;
                     let half_w_px = size.x * 0.452;
                     let t_sin     = DPS_TILT.sin();
                     let t_cos     = DPS_TILT.cos();
                     let arc_y_off = (half_w_px * t_sin - depth_px * SIN_ARC_THETA_MIN * t_cos).max(0.0);
-                    let ghost_y_offset = arc_y_off + t_cos * depth_px + 23.0;
+                    let ghost_y_offset = arc_y_off + t_cos * depth_px + 1.0;
                     // Horizontal offset from source arc's cx to this node's cx, in
                     // local pixels. Derived from arc positions (all 50% wide):
                     //   primary  left=37% → center 62% of parent → +0.24*node_w
@@ -388,7 +402,8 @@ pub fn render_arc(
                     };
                     mat.params = central_ghost_params(
                         entries, arc.amplitude, size.x, size.y, t,
-                        ghost_y_offset, commit_pulse, last_commit_tilt, source_cx_offset,
+                        ghost_y_offset, commit_pulse, last_commit_tilt,
+                        source_cx_offset, scroll_carry,
                     );
                 }
             } else {
@@ -422,6 +437,7 @@ fn central_ghost_params(
     commit_pulse: f32,
     last_commit_tilt: f32,
     source_cx_offset: f32,
+    scroll_carry: f32,
 ) -> ArcParams {
     let ghost_count = entries.len().min(MAX_CENTRAL_GHOST_ENTRIES) as f32;
     let g = |i: usize| entries.get(i).copied().unwrap_or(0.0);
@@ -429,10 +445,12 @@ fn central_ghost_params(
         core: Vec4::new(std::f32::consts::FRAC_PI_2, amplitude, 0.0, ghost_count),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
         ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
-        // w repurposed as source_cx_offset for the ghost[0] animation (tilt is 0 for ghosts).
+        // w repurposed as source_cx_offset for ghost[0] animation (tilt always 0 for ghosts).
         dimensions: Vec4::new(w, h, t, source_cx_offset),
         // x=commit_pulse, y=source tilt, z=hide_main, w=ghost_y_offset
         commit: Vec4::new(commit_pulse, last_commit_tilt, 1.0, ghost_y_offset),
+        // x=scroll_carry: unfinished scroll from interrupted animation
+        extra: Vec4::new(scroll_carry, 0.0, 0.0, 0.0),
     }
 }
 
@@ -450,5 +468,6 @@ fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32
         ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
         dimensions: Vec4::new(w, h, t, tilt),
         commit: Vec4::new(ghost.commit_pulse, ghost.commit_theta, 0.0, 0.0),
+        extra: Vec4::ZERO,
     }
 }
