@@ -46,10 +46,12 @@ impl UiMaterial for ArcMaterial {
 // ── Client-local ghost history ────────────────────────────────────────────────
 
 pub const MAX_GHOST_ENTRIES: usize = 6;
+/// Maximum ghost entries for the unified DPS central stack.
+const MAX_CENTRAL_GHOST_ENTRIES: usize = 8;
 
 /// Rotation angle (radians) for the 22.5° DPS arc tilt. Applied with opposite
 /// signs on primary (−) and secondary (+) so they V toward the center.
-const DPS_TILT: f32 = std::f32::consts::FRAC_PI_8; // π/8 = 22.5°
+const DPS_TILT: f32 = std::f32::consts::FRAC_PI_3; // π/8 = 22.5°
 
 /// Client-local record of recent commit positions. Not replicated — maintained
 /// by detecting `in_lockout` false→true transitions in the render system.
@@ -246,7 +248,7 @@ pub fn render_arc(
             ghost.commit_pulse = 1.0;
             if let Some(ref mut central) = central_opt {
                 central.entries.insert(0, arc.last_commit_theta);
-                central.entries.truncate(MAX_GHOST_ENTRIES);
+                central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
             }
         }
         ghost.prev_in_lockout = arc.in_lockout;
@@ -298,7 +300,7 @@ pub fn render_arc(
                             sec_ghost.0.commit_pulse = 1.0;
                             if let Some(ref mut central) = central_opt {
                                 central.entries.insert(0, secondary.0.last_commit_theta);
-                                central.entries.truncate(MAX_GHOST_ENTRIES);
+                                central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
                             }
                         }
                         sec_ghost.0.prev_in_lockout = secondary.0.in_lockout;
@@ -335,8 +337,10 @@ pub fn render_arc(
                     let size = computed.size();
                     let entries =
                         central_opt.as_ref().map_or(&[][..], |c| c.entries.as_slice());
+                    // Offset just enough to clear the tilted main arc nadir + dot aura.
+                    let ghost_y_offset = size.x * 0.22;
                     mat.params =
-                        central_ghost_params(entries, arc.amplitude, size.x, size.y, t);
+                        central_ghost_params(entries, arc.amplitude, size.x, size.y, t, ghost_y_offset);
                 }
             } else {
                 *vis = Visibility::Hidden;
@@ -357,15 +361,24 @@ pub fn render_arc(
 
 /// Builds ArcParams for the central ghost-only node. Sets `commit.z = 1.0` so
 /// the shader skips the main arc and dot, showing only the ghost stack.
-fn central_ghost_params(entries: &[f32], amplitude: f32, w: f32, h: f32, t: f32) -> ArcParams {
-    let ghost_count = entries.len().min(MAX_GHOST_ENTRIES) as f32;
+/// `ghost_y_offset` (pixels, stored in `commit.w`) pushes the stack below the
+/// tilted main arcs so they don't visually overlap.
+fn central_ghost_params(
+    entries: &[f32],
+    amplitude: f32,
+    w: f32,
+    h: f32,
+    t: f32,
+    ghost_y_offset: f32,
+) -> ArcParams {
+    let ghost_count = entries.len().min(MAX_CENTRAL_GHOST_ENTRIES) as f32;
     let g = |i: usize| entries.get(i).copied().unwrap_or(0.0);
     ArcParams {
         core: Vec4::new(std::f32::consts::FRAC_PI_2, amplitude, 0.0, ghost_count),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
-        ghost_b: Vec4::new(g(4), g(5), 0.0, 0.0),
+        ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
         dimensions: Vec4::new(w, h, t, 0.0), // tilt=0: ghosts always horizontal
-        commit: Vec4::new(0.0, std::f32::consts::FRAC_PI_2, 1.0, 0.0), // z=1 → hide main arc
+        commit: Vec4::new(0.0, std::f32::consts::FRAC_PI_2, 1.0, ghost_y_offset),
     }
 }
 
@@ -380,7 +393,7 @@ fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32
             ghost_count,
         ),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
-        ghost_b: Vec4::new(g(4), g(5), 0.0, 0.0),
+        ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
         dimensions: Vec4::new(w, h, t, tilt),
         commit: Vec4::new(ghost.commit_pulse, ghost.commit_theta, 0.0, 0.0),
     }

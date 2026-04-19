@@ -32,7 +32,7 @@ const ARC_THETA_MAX:  f32 = 2.74889;  // 7π/8
 const ARC_THETA_SPAN: f32 = 2.35619;  // 3π/4
 
 const STACK_OFFSET: f32 = 22.0;   // vertical px between successive arc baselines
-const N_GHOSTS:     i32 = 6;
+const N_GHOSTS:     i32 = 8;
 const TRACK_W:      f32 = 3.2;    // rail half-width in pixels
 const DOT_R:        f32 = 11.0;   // pendulum dot radius
 const AURA_R:       f32 = 18.0;   // soft glow radius around the dot
@@ -46,7 +46,9 @@ fn ghost_theta(i: i32) -> f32 {
         case 2:      { return params.ghost_a.z; }
         case 3:      { return params.ghost_a.w; }
         case 4:      { return params.ghost_b.x; }
-        default:     { return params.ghost_b.y; }
+        case 5:      { return params.ghost_b.y; }
+        case 6:      { return params.ghost_b.z; }
+        default:     { return params.ghost_b.w; }
     }
 }
 
@@ -237,9 +239,10 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
 
         let gt      = ghost_theta(i);
         // Ghost 0 (most recent) sits closest below the main arc.
-        let ghost_cy = f32(i + 1) * STACK_OFFSET;
-        // Opacity: most-recent ghost 0 = 0.65, oldest ghost 5 = 0.20.
-        let opacity = 0.65 - f32(i) * 0.09;
+        // params.commit.w carries an extra y-offset for the central ghost-only node.
+        let ghost_cy = f32(i + 1) * STACK_OFFSET + params.commit.w;
+        // Opacity: most-recent ghost 0 = 0.65, oldest ghost 7 ≈ 0.16.
+        let opacity = 0.65 - f32(i) * 0.07;
 
         // Ghost: commit_pulse=1 so dot always shows the commit zone colour; is_main=false suppresses pop/ripple.
         var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, 0.0);
