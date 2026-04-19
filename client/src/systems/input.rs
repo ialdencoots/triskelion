@@ -119,9 +119,10 @@ pub fn gather_and_send_input(
         .unwrap_or((0.0, 0.0));
 
     // When both mouse buttons are held, always face camera regardless of movement.
+    let is_backpedaling = keyboard.pressed(KeyCode::KeyD) && !keyboard.pressed(KeyCode::KeyE);
     if both_mouse {
         *char_facing = orbit.yaw;
-    } else if move_3d.length_squared() > 0.01 {
+    } else if move_3d.length_squared() > 0.01 && !is_backpedaling {
         *char_facing = (-move_3d.x).atan2(-move_3d.z);
     }
 

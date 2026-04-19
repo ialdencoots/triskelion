@@ -36,7 +36,10 @@ pub fn handle_input(
         if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
         if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
         let movement = if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO };
-        (movement, movement)
+        // Backpedaling: keep facing forward rather than turning around.
+        let is_backpedaling = keyboard.pressed(KeyCode::KeyD) && !keyboard.pressed(KeyCode::KeyE);
+        let face = if is_backpedaling { cam_forward } else { movement };
+        (movement, face)
     };
 
     // Rotate character to face the appropriate direction.
@@ -47,7 +50,7 @@ pub fn handle_input(
 
     controller.basis = TnuaBuiltinWalk {
         desired_motion: move_dir.into(),
-        desired_forward: Dir3::new(move_dir).ok(),
+        desired_forward: Dir3::new(face_dir).ok(),
     };
 
     // initiate_action_feeding must be called every frame before any action() calls
