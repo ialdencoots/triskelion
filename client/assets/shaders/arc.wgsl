@@ -242,14 +242,16 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
         let opacity = 0.65 - f32(i) * 0.09;
 
         // Ghost: commit_pulse=1 so dot always shows the commit zone colour; is_main=false suppresses pop/ripple.
-        var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, tilt);
+        var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, 0.0);
         g = vec4<f32>(g.rgb, g.a * opacity);
         color = blend_over(g, color);
     }
 
-    // Main arc always rendered last (on top).
-    let main_c = sine_arc_layer(px, py, cx, 0.0, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true, tilt);
-    color = blend_over(main_c, color);
+    // Main arc rendered last (on top). Skipped when commit.z > 0.5 (ghost-only mode).
+    if params.commit.z < 0.5 {
+        let main_c = sine_arc_layer(px, py, cx, 0.0, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true, tilt);
+        color = blend_over(main_c, color);
+    }
 
     return color;
 }

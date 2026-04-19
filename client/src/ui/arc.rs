@@ -89,16 +89,28 @@ pub struct PrimaryArcNode;
 #[derive(Component)]
 pub struct SecondaryArcNode;
 
+/// Marks the central ghost-stack `MaterialNode` child of `MinigameRoot` (DPS only).
+#[derive(Component)]
+pub struct CentralGhostNode;
+
 /// Client-local ghost history for the secondary (left) arc in DPS stance.
 #[derive(Component, Default)]
 pub struct SecondaryGhostArcHistory(pub GhostArcHistory);
+
+/// Combined ghost history for DPS stance — aggregates commits from both arcs
+/// in recency order so the central ghost stack shows a unified trail.
+#[derive(Component, Default)]
+pub struct CentralGhostHistory {
+    pub entries: Vec<f32>,
+    pub prev_stance: Option<RoleStance>,
+}
 
 // ── Ghost history setup ───────────────────────────────────────────────────────
 
 pub fn on_arc_state_added(trigger: On<Add, ArcState>, mut commands: Commands) {
     commands
         .entity(trigger.event_target())
-        .insert(GhostArcHistory::default());
+        .insert((GhostArcHistory::default(), CentralGhostHistory::default()));
 }
 
 pub fn on_secondary_arc_state_added(trigger: On<Add, SecondaryArcState>, mut commands: Commands) {
@@ -118,6 +130,7 @@ pub fn spawn_arc_overlay(
 
     let primary_mat = materials.add(ArcMaterial::default());
     let secondary_mat = materials.add(ArcMaterial::default());
+    let central_mat = materials.add(ArcMaterial::default());
 
     commands.entity(root).with_children(|parent| {
         // Primary arc — full width by default; shrinks to half in DPS stance.
@@ -143,7 +156,23 @@ pub fn spawn_arc_overlay(
                 width: Val::Percent(50.0),
                 height: Val::Percent(100.0),
                 position_type: PositionType::Absolute,
-                left: Val::Px(0.0),
+                left: Val::Percent(5.0),
+                top: Val::Px(0.0),
+                ..default()
+            },
+            Visibility::Hidden,
+        ));
+
+        // Central ghost stack — centered, DPS only. Renders unified commit history
+        // from both arcs as horizontal ghost arcs; the live arc is hidden.
+        parent.spawn((
+            CentralGhostNode,
+            MaterialNode(central_mat),
+            Node {
+                width: Val::Percent(50.0),
+                height: Val::Percent(100.0),
+                position_type: PositionType::Absolute,
+                left: Val::Percent(25.0),
                 top: Val::Px(0.0),
                 ..default()
             },
@@ -165,19 +194,26 @@ pub fn render_arc(
         Option<&SecondaryArcState>,
         Option<&mut GhostArcHistory>,
         Option<&mut SecondaryGhostArcHistory>,
+        Option<&mut CentralGhostHistory>,
     )>,
     mut primary_q: Query<
         (&mut Visibility, &mut Node, &MaterialNode<ArcMaterial>, &ComputedNode),
-        (With<PrimaryArcNode>, Without<SecondaryArcNode>),
+        (With<PrimaryArcNode>, Without<SecondaryArcNode>, Without<CentralGhostNode>),
     >,
     mut secondary_q: Query<
         (&mut Visibility, &MaterialNode<ArcMaterial>, &ComputedNode),
-        (With<SecondaryArcNode>, Without<PrimaryArcNode>),
+        (With<SecondaryArcNode>, Without<PrimaryArcNode>, Without<CentralGhostNode>),
+    >,
+    mut central_q: Query<
+        (&mut Visibility, &MaterialNode<ArcMaterial>, &ComputedNode),
+        (With<CentralGhostNode>, Without<PrimaryArcNode>, Without<SecondaryArcNode>),
     >,
     mut arc_materials: ResMut<Assets<ArcMaterial>>,
 ) {
     let Some(own) = own_entity else { return };
-    let Ok((_pid, combat, arc_opt, secondary_opt, ghost_opt, mut sec_ghost_opt)) = server_q.get_mut(own.0) else {
+    let Ok((_pid, combat, arc_opt, secondary_opt, ghost_opt, mut sec_ghost_opt, mut central_opt)) =
+        server_q.get_mut(own.0)
+    else {
         return;
     };
 
@@ -186,43 +222,63 @@ pub fn render_arc(
     let t = time.elapsed_secs();
 
     if let (Some(arc), Some(mut ghost)) = (arc_opt, ghost_opt) {
-        // Clear history on any stance change (exit or switch).
+        // Clear all histories on any stance change.
         if ghost.prev_stance != combat.active_stance {
             ghost.entries.clear();
             ghost.prev_in_lockout = false;
             ghost.commit_pulse = 0.0;
             ghost.commit_theta = std::f32::consts::FRAC_PI_2;
+            if let Some(ref mut central) = central_opt {
+                central.entries.clear();
+            }
         }
         ghost.prev_stance = combat.active_stance;
+        if let Some(ref mut central) = central_opt {
+            central.prev_stance = combat.active_stance;
+        }
 
-        // Ghost history edge detection: in_lockout false→true = new commit.
+        // Primary commit detection — push to central history; keep entries for
+        // Tank/Heal ghost trail (suppressed in DPS via sparse ghost below).
         if !ghost.prev_in_lockout && arc.in_lockout {
             ghost.entries.insert(0, arc.last_commit_theta);
             ghost.entries.truncate(MAX_GHOST_ENTRIES);
             ghost.commit_theta = arc.last_commit_theta;
             ghost.commit_pulse = 1.0;
+            if let Some(ref mut central) = central_opt {
+                central.entries.insert(0, arc.last_commit_theta);
+                central.entries.truncate(MAX_GHOST_ENTRIES);
+            }
         }
         ghost.prev_in_lockout = arc.in_lockout;
-
-        // Decay commit pulse (~0.5 s duration).
         ghost.commit_pulse = (ghost.commit_pulse - time.delta_secs() * 2.0).max(0.0);
 
+        // Primary arc — in DPS pass a sparse ghost (commit pulse/theta only, no trail).
         if let Ok((mut vis, mut node, mat_handle, computed)) = primary_q.single_mut() {
             *vis = if in_stance { Visibility::Visible } else { Visibility::Hidden };
             node.width = if in_dps { Val::Percent(50.0) } else { Val::Percent(100.0) };
-            node.left  = if in_dps { Val::Percent(50.0) } else { Val::Px(0.0) };
+            node.left  = if in_dps { Val::Percent(45.0) } else { Val::Px(0.0) };
 
             if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                 let size = computed.size();
                 let tilt = if in_dps { -DPS_TILT } else { 0.0 };
-                mat.params = arc_to_params(arc, &ghost, size.x, size.y, t, tilt);
+                let sparse;
+                let ghost_ref: &GhostArcHistory = if in_dps {
+                    sparse = GhostArcHistory {
+                        commit_pulse: ghost.commit_pulse,
+                        commit_theta: ghost.commit_theta,
+                        ..GhostArcHistory::default()
+                    };
+                    &sparse
+                } else {
+                    &*ghost
+                };
+                mat.params = arc_to_params(arc, ghost_ref, size.x, size.y, t, tilt);
             }
         }
 
-        // Clear secondary ghost on any stance change, mirroring primary ghost behavior.
+        // Clear secondary ghost on any stance change.
         if let Some(ref mut sec_ghost) = sec_ghost_opt {
             if sec_ghost.0.prev_stance != combat.active_stance {
-                sec_ghost.0.entries.clear();
                 sec_ghost.0.prev_in_lockout = false;
                 sec_ghost.0.commit_pulse = 0.0;
                 sec_ghost.0.commit_theta = std::f32::consts::FRAC_PI_2;
@@ -230,31 +286,57 @@ pub fn render_arc(
             sec_ghost.0.prev_stance = combat.active_stance;
         }
 
+        // Secondary arc.
         if let Ok((mut vis, mat_handle, computed)) = secondary_q.single_mut() {
             if in_dps && in_stance {
                 *vis = Visibility::Visible;
                 if let Some(secondary) = secondary_opt {
+                    // Secondary commit detection — push to central history only.
                     if let Some(ref mut sec_ghost) = sec_ghost_opt {
                         if !sec_ghost.0.prev_in_lockout && secondary.0.in_lockout {
-                            sec_ghost.0.entries.insert(0, secondary.0.last_commit_theta);
-                            sec_ghost.0.entries.truncate(MAX_GHOST_ENTRIES);
                             sec_ghost.0.commit_theta = secondary.0.last_commit_theta;
                             sec_ghost.0.commit_pulse = 1.0;
+                            if let Some(ref mut central) = central_opt {
+                                central.entries.insert(0, secondary.0.last_commit_theta);
+                                central.entries.truncate(MAX_GHOST_ENTRIES);
+                            }
                         }
                         sec_ghost.0.prev_in_lockout = secondary.0.in_lockout;
-                        sec_ghost.0.commit_pulse = (sec_ghost.0.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+                        sec_ghost.0.commit_pulse =
+                            (sec_ghost.0.commit_pulse - time.delta_secs() * 2.0).max(0.0);
                     }
 
-                    // Always update the material — use ghost if present, empty otherwise.
                     if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                         let size = computed.size();
-                        let empty = GhostArcHistory::default();
-                        let ghost_ref = match sec_ghost_opt {
-                            Some(ref sg) => &sg.0,
-                            None => &empty,
+                        let commit_pulse =
+                            sec_ghost_opt.as_ref().map_or(0.0, |sg| sg.0.commit_pulse);
+                        let commit_theta = sec_ghost_opt
+                            .as_ref()
+                            .map_or(std::f32::consts::FRAC_PI_2, |sg| sg.0.commit_theta);
+                        let sec_sparse = GhostArcHistory {
+                            commit_pulse,
+                            commit_theta,
+                            ..GhostArcHistory::default()
                         };
-                        mat.params = arc_to_params(&secondary.0, ghost_ref, size.x, size.y, t, DPS_TILT);
+                        mat.params =
+                            arc_to_params(&secondary.0, &sec_sparse, size.x, size.y, t, DPS_TILT);
                     }
+                }
+            } else {
+                *vis = Visibility::Hidden;
+            }
+        }
+
+        // Central ghost stack — visible in DPS only.
+        if let Ok((mut vis, mat_handle, computed)) = central_q.single_mut() {
+            if in_dps && in_stance {
+                *vis = Visibility::Visible;
+                if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
+                    let size = computed.size();
+                    let entries =
+                        central_opt.as_ref().map_or(&[][..], |c| c.entries.as_slice());
+                    mat.params =
+                        central_ghost_params(entries, arc.amplitude, size.x, size.y, t);
                 }
             } else {
                 *vis = Visibility::Hidden;
@@ -267,6 +349,23 @@ pub fn render_arc(
         if let Ok((mut vis, _, _)) = secondary_q.single_mut() {
             *vis = Visibility::Hidden;
         }
+        if let Ok((mut vis, _, _)) = central_q.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+    }
+}
+
+/// Builds ArcParams for the central ghost-only node. Sets `commit.z = 1.0` so
+/// the shader skips the main arc and dot, showing only the ghost stack.
+fn central_ghost_params(entries: &[f32], amplitude: f32, w: f32, h: f32, t: f32) -> ArcParams {
+    let ghost_count = entries.len().min(MAX_GHOST_ENTRIES) as f32;
+    let g = |i: usize| entries.get(i).copied().unwrap_or(0.0);
+    ArcParams {
+        core: Vec4::new(std::f32::consts::FRAC_PI_2, amplitude, 0.0, ghost_count),
+        ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
+        ghost_b: Vec4::new(g(4), g(5), 0.0, 0.0),
+        dimensions: Vec4::new(w, h, t, 0.0), // tilt=0: ghosts always horizontal
+        commit: Vec4::new(0.0, std::f32::consts::FRAC_PI_2, 1.0, 0.0), // z=1 → hide main arc
     }
 }
 
