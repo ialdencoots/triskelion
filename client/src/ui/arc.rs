@@ -47,6 +47,10 @@ impl UiMaterial for ArcMaterial {
 
 pub const MAX_GHOST_ENTRIES: usize = 6;
 
+/// Baseline slope (dy/dx) for the 22.5° DPS arc tilt. Applied with opposite
+/// signs on primary (−) and secondary (+) so they V toward the center.
+const DPS_TILT: f32 = 0.41421356_f32; // tan(π/8) = tan(22.5°)
+
 /// Client-local record of recent commit positions. Not replicated — maintained
 /// by detecting `in_lockout` false→true transitions in the render system.
 #[derive(Component)]
@@ -85,12 +89,22 @@ pub struct PrimaryArcNode;
 #[derive(Component)]
 pub struct SecondaryArcNode;
 
+/// Client-local ghost history for the secondary (left) arc in DPS stance.
+#[derive(Component, Default)]
+pub struct SecondaryGhostArcHistory(pub GhostArcHistory);
+
 // ── Ghost history setup ───────────────────────────────────────────────────────
 
 pub fn on_arc_state_added(trigger: On<Add, ArcState>, mut commands: Commands) {
     commands
         .entity(trigger.event_target())
         .insert(GhostArcHistory::default());
+}
+
+pub fn on_secondary_arc_state_added(trigger: On<Add, SecondaryArcState>, mut commands: Commands) {
+    commands
+        .entity(trigger.event_target())
+        .insert(SecondaryGhostArcHistory::default());
 }
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
@@ -121,7 +135,7 @@ pub fn spawn_arc_overlay(
             Visibility::Hidden,
         ));
 
-        // Secondary arc — right half, only visible in DPS stance.
+        // Secondary arc — left half, only visible in DPS stance.
         parent.spawn((
             SecondaryArcNode,
             MaterialNode(secondary_mat),
@@ -129,7 +143,7 @@ pub fn spawn_arc_overlay(
                 width: Val::Percent(50.0),
                 height: Val::Percent(100.0),
                 position_type: PositionType::Absolute,
-                left: Val::Percent(50.0),
+                left: Val::Px(0.0),
                 top: Val::Px(0.0),
                 ..default()
             },
@@ -150,6 +164,7 @@ pub fn render_arc(
         Option<&ArcState>,
         Option<&SecondaryArcState>,
         Option<&mut GhostArcHistory>,
+        Option<&mut SecondaryGhostArcHistory>,
     )>,
     mut primary_q: Query<
         (&mut Visibility, &mut Node, &MaterialNode<ArcMaterial>, &ComputedNode),
@@ -162,7 +177,7 @@ pub fn render_arc(
     mut arc_materials: ResMut<Assets<ArcMaterial>>,
 ) {
     let Some(own) = own_entity else { return };
-    let Ok((_pid, combat, arc_opt, secondary_opt, ghost_opt)) = server_q.get_mut(own.0) else {
+    let Ok((_pid, combat, arc_opt, secondary_opt, ghost_opt, mut sec_ghost_opt)) = server_q.get_mut(own.0) else {
         return;
     };
 
@@ -195,10 +210,12 @@ pub fn render_arc(
         if let Ok((mut vis, mut node, mat_handle, computed)) = primary_q.single_mut() {
             *vis = if in_stance { Visibility::Visible } else { Visibility::Hidden };
             node.width = if in_dps { Val::Percent(50.0) } else { Val::Percent(100.0) };
+            node.left  = if in_dps { Val::Percent(50.0) } else { Val::Px(0.0) };
 
             if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                 let size = computed.size();
-                mat.params = arc_to_params(arc, &ghost, size.x, size.y, t);
+                let tilt = if in_dps { -DPS_TILT } else { 0.0 };
+                mat.params = arc_to_params(arc, &ghost, size.x, size.y, t, tilt);
             }
         }
 
@@ -206,10 +223,35 @@ pub fn render_arc(
             if in_dps && in_stance {
                 *vis = Visibility::Visible;
                 if let Some(secondary) = secondary_opt {
+                    // Update ghost history when available (may be absent for a frame
+                    // if the observer hasn't fired yet on fresh replication).
+                    if let Some(ref mut sec_ghost) = sec_ghost_opt {
+                        if sec_ghost.0.prev_stance != combat.active_stance {
+                            sec_ghost.0.entries.clear();
+                            sec_ghost.0.prev_in_lockout = false;
+                            sec_ghost.0.commit_pulse = 0.0;
+                            sec_ghost.0.commit_theta = std::f32::consts::FRAC_PI_2;
+                        }
+                        sec_ghost.0.prev_stance = combat.active_stance;
+                        if !sec_ghost.0.prev_in_lockout && secondary.0.in_lockout {
+                            sec_ghost.0.entries.insert(0, secondary.0.last_commit_theta);
+                            sec_ghost.0.entries.truncate(MAX_GHOST_ENTRIES);
+                            sec_ghost.0.commit_theta = secondary.0.last_commit_theta;
+                            sec_ghost.0.commit_pulse = 1.0;
+                        }
+                        sec_ghost.0.prev_in_lockout = secondary.0.in_lockout;
+                        sec_ghost.0.commit_pulse = (sec_ghost.0.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+                    }
+
+                    // Always update the material — use ghost if present, empty otherwise.
                     if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                         let size = computed.size();
                         let empty = GhostArcHistory::default();
-                        mat.params = arc_to_params(&secondary.0, &empty, size.x, size.y, t);
+                        let ghost_ref = match sec_ghost_opt {
+                            Some(ref sg) => &sg.0,
+                            None => &empty,
+                        };
+                        mat.params = arc_to_params(&secondary.0, ghost_ref, size.x, size.y, t, DPS_TILT);
                     }
                 }
             } else {
@@ -226,7 +268,7 @@ pub fn render_arc(
     }
 }
 
-fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32) -> ArcParams {
+fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32, tilt: f32) -> ArcParams {
     let ghost_count = ghost.entries.len().min(MAX_GHOST_ENTRIES) as f32;
     let g = |i: usize| ghost.entries.get(i).copied().unwrap_or(0.0);
     ArcParams {
@@ -238,7 +280,7 @@ fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32
         ),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
         ghost_b: Vec4::new(g(4), g(5), 0.0, 0.0),
-        dimensions: Vec4::new(w, h, t, 0.0),
+        dimensions: Vec4::new(w, h, t, tilt),
         commit: Vec4::new(ghost.commit_pulse, ghost.commit_theta, 0.0, 0.0),
     }
 }

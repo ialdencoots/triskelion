@@ -35,6 +35,7 @@ impl Plugin for HudPlugin {
         );
         app.add_observer(enemy_bars::on_enemy_bar_added);
         app.add_observer(crate::ui::arc::on_arc_state_added);
+        app.add_observer(crate::ui::arc::on_secondary_arc_state_added);
         app.add_observer(group_frame::on_party_member_added);
         app.add_observer(group_frame::on_party_member_removed);
         app.add_systems(

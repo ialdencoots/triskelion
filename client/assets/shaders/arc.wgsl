@@ -90,6 +90,7 @@ fn sine_arc_layer(
     lockout: bool, time: f32,
     commit_pulse: f32, commit_theta: f32,
     is_main: bool,
+    tilt: f32,
 ) -> vec4<f32> {
     let x_left  = cx - half_w;
     let x_right = cx + half_w;
@@ -107,14 +108,14 @@ fn sine_arc_layer(
 
         // Visual angle drives the curve SHAPE (3/4-sine section).
         let visual_theta = ARC_THETA_MIN + t * ARC_THETA_SPAN;
-        let arc_y        = cy + depth * sin(visual_theta);
+        let arc_y        = cy + depth * sin(visual_theta) + (px - cx) * tilt;
 
         // Physical angle drives COLOUR and MEANING (full [0, π] range).
         // Endpoints have physical_theta = 0 or π → proximity = 1 → full red.
         let physical_theta = t * PI;
 
-        // Perpendicular distance. Derivative uses the visual angle.
-        let slope     = depth * ARC_THETA_SPAN / (2.0 * half_w) * cos(visual_theta);
+        // Perpendicular distance. Derivative uses the visual angle plus tilt slope.
+        let slope     = depth * ARC_THETA_SPAN / (2.0 * half_w) * cos(visual_theta) + tilt;
         let perp_dist = abs(py - arc_y) / sqrt(1.0 + slope * slope);
 
         let rail_w = 1.0 - smoothstep(TRACK_W, TRACK_W + 1.5, perp_dist);
@@ -141,12 +142,14 @@ fn sine_arc_layer(
 
     // ── Rounded endpoint caps ─────────────────────────────────────────────────
     // Caps sit at the arc endpoints. Physical theta at endpoint = 0 or π → full red.
-    let endpoint_y = cy + depth * sin(ARC_THETA_MIN); // same left and right (symmetric)
+    let ep_base        = cy + depth * sin(ARC_THETA_MIN);
+    let endpoint_y_l   = ep_base - half_w * tilt;  // (x_left  - cx) * tilt = -half_w * tilt
+    let endpoint_y_r   = ep_base + half_w * tilt;  // (x_right - cx) * tilt = +half_w * tilt
     let apex_col   = clamp(zone_color(0.0, amplitude) * 1.15, vec3<f32>(0.0), vec3<f32>(1.5));
     let cap_r = TRACK_W * 1.05;
 
-    let dl = distance(vec2<f32>(px, py), vec2<f32>(x_left,  endpoint_y));
-    let dr = distance(vec2<f32>(px, py), vec2<f32>(x_right, endpoint_y));
+    let dl = distance(vec2<f32>(px, py), vec2<f32>(x_left,  endpoint_y_l));
+    let dr = distance(vec2<f32>(px, py), vec2<f32>(x_right, endpoint_y_r));
 
     let cw_l = sdisk(dl, cap_r);
     let cw_r = sdisk(dr, cap_r);
@@ -158,7 +161,7 @@ fn sine_arc_layer(
     // The dot's y follows the visual (3/4-sine) curve shape at that t.
     let dot_t  = theta / PI;
     let dot_x  = x_left + dot_t * (2.0 * half_w);
-    let dot_y  = cy + depth * sin(ARC_THETA_MIN + dot_t * ARC_THETA_SPAN);
+    let dot_y  = cy + depth * sin(ARC_THETA_MIN + dot_t * ARC_THETA_SPAN) + (dot_x - cx) * tilt;
     let dd    = distance(vec2<f32>(px, py), vec2<f32>(dot_x, dot_y));
 
     // Size pop on commit — main arc only; ghosts stay a fixed size.
@@ -196,10 +199,15 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let node_h = params.dimensions.y;
     let time   = params.dimensions.z;
 
+    // Guard against uninitialized material (node_w=0 maps all pixels to position 0
+    // which lands inside the dot radius, producing a solid white fill).
+    if node_w < 1.0 { return vec4<f32>(0.0); }
+
     let theta   = params.core.x;
     let amp     = params.core.y;
     let lockout = params.core.z > 0.5;
     let ghost_n = i32(params.core.w);
+    let tilt    = params.dimensions.w;
 
     let commit_pulse = params.commit.x;
     let commit_theta = params.commit.y;
@@ -227,13 +235,13 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
         let opacity = 0.65 - f32(i) * 0.09;
 
         // Ghost: commit_pulse=1 so dot always shows the commit zone colour; is_main=false suppresses pop/ripple.
-        var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false);
+        var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, tilt);
         g = vec4<f32>(g.rgb, g.a * opacity);
         color = blend_over(g, color);
     }
 
     // Main arc always rendered last (on top).
-    let main_c = sine_arc_layer(px, py, cx, 0.0, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true);
+    let main_c = sine_arc_layer(px, py, cx, 0.0, half_w, depth, theta, amp, lockout, time, commit_pulse, commit_theta, true, tilt);
     color = blend_over(main_c, color);
 
     return color;

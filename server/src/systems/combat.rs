@@ -90,7 +90,7 @@ pub fn process_player_inputs(
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, _secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -142,7 +142,21 @@ pub fn process_player_inputs(
                     }
                 }
             }
-            // action_2 (secondary arc / W key) deferred — no-op for now
+            if input.minigame.action_2 && combat.active_stance == Some(RoleStance::Dps) {
+                if let Some(ref mut secondary) = secondary_arc_opt {
+                    let was_unlocked = !secondary.0.in_lockout;
+                    process_arc_commit(&mut secondary.0);
+                    if was_unlocked {
+                        apply_arc_damage(
+                            secondary.0.last_commit_quality,
+                            input.facing_yaw,
+                            &pos,
+                            target_opt,
+                            &mut enemy_query,
+                        );
+                    }
+                }
+            }
         } else {
             // No input this tick — zero XZ motion.
             vel.vx = 0.0;
