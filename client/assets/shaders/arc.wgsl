@@ -245,14 +245,28 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
         if i >= ghost_n { continue; }
 
         let gt      = ghost_theta(i);
-        // Ghost 0 (most recent) sits closest below the main arc.
-        // params.commit.w carries an extra y-offset for the central ghost-only node.
-        let ghost_cy = f32(i + 1) * STACK_OFFSET + params.commit.w;
+        // scroll_t runs 1→0 at twice the speed of commit_pulse, finishing halfway through.
+        let scroll_t = saturate(commit_pulse * 2.0 - 1.0);
+        // Animate ghosts scrolling down on each new commit.
+        let ghost_cy = (f32(i + 1) - scroll_t) * STACK_OFFSET + params.commit.w;
         // Opacity: most-recent ghost 0 = 0.65, oldest ghost 7 ≈ 0.16.
         let opacity = 0.65 - f32(i) * 0.07;
 
-        // Ghost: commit_pulse=1 so dot always shows the commit zone colour; is_main=false suppresses pop/ripple.
-        var g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, 0.0);
+        // Ghost: is_main=false suppresses size pop/ripple; commit_pulse=1 keeps zone colour on dot.
+        // For the most recent ghost (i=0) in central mode, animate from the source arc into place.
+        var g: vec4<f32>;
+        if i == 0 && params.commit.z > 0.5 && commit_pulse > 0.001 {
+            let src_tilt      = params.commit.y;
+            let src_cx_offset = params.dimensions.w; // repurposed from tilt (always 0 for ghosts)
+            let anim_tilt = src_tilt * scroll_t;
+            let anim_cx   = cx + src_cx_offset * scroll_t;
+            let src_y_off = max(0.0, half_w * abs(sin(src_tilt))
+                                   - depth * SIN_ARC_THETA_MIN * cos(src_tilt));
+            let anim_cy   = mix(ghost_cy, src_y_off, scroll_t);
+            g = sine_arc_layer(px, py, anim_cx, anim_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, anim_tilt);
+        } else {
+            g = sine_arc_layer(px, py, cx, ghost_cy, half_w, depth, gt, amp, false, 0.0, 1.0, gt, false, 0.0);
+        }
         g = vec4<f32>(g.rgb, g.a * opacity);
         color = blend_over(g, color);
     }

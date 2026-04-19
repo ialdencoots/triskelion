@@ -104,10 +104,25 @@ pub struct SecondaryGhostArcHistory(pub GhostArcHistory);
 
 /// Combined ghost history for DPS stance — aggregates commits from both arcs
 /// in recency order so the central ghost stack shows a unified trail.
-#[derive(Component, Default)]
+#[derive(Component)]
 pub struct CentralGhostHistory {
     pub entries: Vec<f32>,
     pub prev_stance: Option<RoleStance>,
+    /// 1.0→0.0 animation timer for ghost[0] flying into the stack.
+    pub commit_pulse: f32,
+    /// Source tilt (±DPS_TILT) of the most recent commit, drives animation start.
+    pub last_commit_tilt: f32,
+}
+
+impl Default for CentralGhostHistory {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            prev_stance: None,
+            commit_pulse: 0.0,
+            last_commit_tilt: 0.0,
+        }
+    }
 }
 
 // ── Ghost history setup ───────────────────────────────────────────────────────
@@ -235,6 +250,7 @@ pub fn render_arc(
             ghost.commit_theta = std::f32::consts::FRAC_PI_2;
             if let Some(ref mut central) = central_opt {
                 central.entries.clear();
+                central.commit_pulse = 0.0;
             }
         }
         ghost.prev_stance = combat.active_stance;
@@ -252,6 +268,8 @@ pub fn render_arc(
             if let Some(ref mut central) = central_opt {
                 central.entries.insert(0, arc.last_commit_theta);
                 central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
+                central.commit_pulse = 1.0;
+                central.last_commit_tilt = -DPS_TILT;
             }
         }
         ghost.prev_in_lockout = arc.in_lockout;
@@ -304,6 +322,8 @@ pub fn render_arc(
                             if let Some(ref mut central) = central_opt {
                                 central.entries.insert(0, secondary.0.last_commit_theta);
                                 central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
+                                central.commit_pulse = 1.0;
+                                central.last_commit_tilt = DPS_TILT;
                             }
                         }
                         sec_ghost.0.prev_in_lockout = secondary.0.in_lockout;
@@ -332,6 +352,11 @@ pub fn render_arc(
             }
         }
 
+        // Decay central animation pulse.
+        if let Some(ref mut central) = central_opt {
+            central.commit_pulse = (central.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+        }
+
         // Central ghost stack — visible in DPS only.
         if let Ok((mut vis, mat_handle, computed)) = central_q.single_mut() {
             if in_dps && in_stance {
@@ -340,6 +365,10 @@ pub fn render_arc(
                     let size = computed.size();
                     let entries =
                         central_opt.as_ref().map_or(&[][..], |c| c.entries.as_slice());
+                    let commit_pulse =
+                        central_opt.as_ref().map_or(0.0, |c| c.commit_pulse);
+                    let last_commit_tilt =
+                        central_opt.as_ref().map_or(0.0, |c| c.last_commit_tilt);
                     // Dynamic offset: mirrors the shader's arc y_offset + nadir + aura.
                     let depth_px  = size.x * 0.310;
                     let half_w_px = size.x * 0.452;
@@ -347,8 +376,20 @@ pub fn render_arc(
                     let t_cos     = DPS_TILT.cos();
                     let arc_y_off = (half_w_px * t_sin - depth_px * SIN_ARC_THETA_MIN * t_cos).max(0.0);
                     let ghost_y_offset = arc_y_off + t_cos * depth_px + 23.0;
-                    mat.params =
-                        central_ghost_params(entries, arc.amplitude, size.x, size.y, t, ghost_y_offset);
+                    // Horizontal offset from source arc's cx to this node's cx, in
+                    // local pixels. Derived from arc positions (all 50% wide):
+                    //   primary  left=37% → center 62% of parent → +0.24*node_w
+                    //   secondary left=13% → center 38% of parent → -0.24*node_w
+                    //   central  left=25% → center 50% of parent
+                    let source_cx_offset = if last_commit_tilt < 0.0 {
+                        size.x * 0.24   // primary is to the right
+                    } else {
+                        -size.x * 0.24  // secondary is to the left
+                    };
+                    mat.params = central_ghost_params(
+                        entries, arc.amplitude, size.x, size.y, t,
+                        ghost_y_offset, commit_pulse, last_commit_tilt, source_cx_offset,
+                    );
                 }
             } else {
                 *vis = Visibility::Hidden;
@@ -378,6 +419,9 @@ fn central_ghost_params(
     h: f32,
     t: f32,
     ghost_y_offset: f32,
+    commit_pulse: f32,
+    last_commit_tilt: f32,
+    source_cx_offset: f32,
 ) -> ArcParams {
     let ghost_count = entries.len().min(MAX_CENTRAL_GHOST_ENTRIES) as f32;
     let g = |i: usize| entries.get(i).copied().unwrap_or(0.0);
@@ -385,8 +429,10 @@ fn central_ghost_params(
         core: Vec4::new(std::f32::consts::FRAC_PI_2, amplitude, 0.0, ghost_count),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),
         ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
-        dimensions: Vec4::new(w, h, t, 0.0), // tilt=0: ghosts always horizontal
-        commit: Vec4::new(0.0, std::f32::consts::FRAC_PI_2, 1.0, ghost_y_offset),
+        // w repurposed as source_cx_offset for the ghost[0] animation (tilt is 0 for ghosts).
+        dimensions: Vec4::new(w, h, t, source_cx_offset),
+        // x=commit_pulse, y=source tilt, z=hide_main, w=ghost_y_offset
+        commit: Vec4::new(commit_pulse, last_commit_tilt, 1.0, ghost_y_offset),
     }
 }
 
