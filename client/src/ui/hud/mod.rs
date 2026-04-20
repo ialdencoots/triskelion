@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::prelude::UiMaterialPlugin;
 
+use crate::plugin::AppState;
 use crate::ui::arc::ArcMaterial;
 
 pub mod action_bar;
@@ -19,7 +20,7 @@ impl Plugin for HudPlugin {
         app.add_plugins(UiMaterialPlugin::<ArcMaterial>::default());
         app.init_resource::<target_panel::ThreatDisplayData>();
         app.add_systems(
-            Startup,
+            OnEnter(AppState::InGame),
             (
                 frames::spawn_frames,
                 action_bar::spawn_action_bar,

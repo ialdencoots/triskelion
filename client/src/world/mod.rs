@@ -4,6 +4,8 @@ use bevy_tnua::builtins::{TnuaBuiltinJump, TnuaBuiltinWalk};
 use bevy_tnua::prelude::*;
 use bevy_tnua_avian3d::*;
 
+use crate::plugin::AppState;
+
 pub mod camera;
 pub mod controller;
 pub mod enemies;
@@ -37,7 +39,7 @@ impl Plugin for WorldPlugin {
         app.init_resource::<instance::CurrentInstanceId>();
 
         app.add_systems(
-            Startup,
+            OnEnter(AppState::InGame),
             (
                 terrain::spawn_terrain,
                 terrain::spawn_player,
