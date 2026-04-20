@@ -85,6 +85,42 @@ const SEPARATION_RADIUS: f32 = 3.5;
 // Maximum contribution of the separation force relative to the unit chase direction.
 const SEPARATION_STRENGTH: f32 = 1.2;
 
+/// Returns `(dist, dx, dz, entity)` for the nearest player in the same instance
+/// within `max_dist` world units. Pass `f32::INFINITY` for no distance cap.
+fn find_nearest_player_in_instance(
+    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    iid: u32,
+    mob_pos: &EnemyPosition,
+    max_dist: f32,
+) -> Option<(f32, f32, f32, Entity)> {
+    player_query
+        .iter()
+        .filter(|(_, _, _, piid, _)| piid.0 == iid)
+        .map(|(entity, _, ppos, _, _)| {
+            let dx = ppos.x - mob_pos.x;
+            let dz = ppos.z - mob_pos.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            (dist, dx, dz, entity)
+        })
+        .filter(|(dist, _, _, _)| *dist <= max_dist)
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+/// Returns the clamped separation force vector for a mob at `my_xz` from all
+/// other mobs in the same instance.
+fn compute_separation_force(my_xz: Vec2, mob_positions: &[(Vec2, u32)], iid: u32) -> Vec2 {
+    let mut sep = Vec2::ZERO;
+    for (other_xz, other_iid) in mob_positions {
+        if *other_iid != iid { continue; }
+        let diff = my_xz - *other_xz;
+        let dist = diff.length();
+        if dist > 0.01 && dist < SEPARATION_RADIUS {
+            sep += diff.normalize() * (1.0 - dist / SEPARATION_RADIUS);
+        }
+    }
+    sep.clamp_length_max(1.0) * SEPARATION_STRENGTH
+}
+
 /// Sets velocity for a mob that has reached melee range.
 ///
 /// Projects the separation force onto the tangent perpendicular to the
@@ -133,17 +169,7 @@ pub fn tick_enemy_walk(
         match &mut *behavior {
             MobBehavior::Patrol { phase, aggro_range, melee_range, aggroed } => {
                 // Find nearest player for aggro trigger (still proximity-based).
-                // Includes Entity so we can seed initial threat on first aggro.
-                let nearest = player_query
-                    .iter()
-                    .filter(|(_, _, _, piid, _)| piid.0 == iid.0)
-                    .map(|(entity, _, ppos, _, _)| {
-                        let dx = ppos.x - pos.x;
-                        let dz = ppos.z - pos.z;
-                        let dist = (dx * dx + dz * dz).sqrt();
-                        (dist, dx, dz, entity)
-                    })
-                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                let nearest = find_nearest_player_in_instance(&player_query, iid.0, &pos, f32::INFINITY);
 
                 // Aggro/de-aggro with hysteresis: break at 1.5× the aggro range
                 // so mobs don't flicker when the player sits on the threshold.
@@ -165,17 +191,7 @@ pub fn tick_enemy_walk(
                 }
 
                 if *aggroed {
-                    let my_xz = Vec2::new(pos.x, pos.z);
-                    let mut sep = Vec2::ZERO;
-                    for (other_xz, other_iid) in &mob_positions {
-                        if *other_iid != iid.0 { continue; }
-                        let diff = my_xz - *other_xz;
-                        let dist = diff.length();
-                        if dist > 0.01 && dist < SEPARATION_RADIUS {
-                            sep += diff.normalize() * (1.0 - dist / SEPARATION_RADIUS);
-                        }
-                    }
-                    let sep = sep.clamp_length_max(1.0) * SEPARATION_STRENGTH;
+                    let sep = compute_separation_force(Vec2::new(pos.x, pos.z), &mob_positions, iid.0);
 
                     // Chase highest-threat player; fall back to nearest.
                     let target = select_threat_target(&threat_list, iid.0, &pos, leash_range, &player_query)
@@ -209,36 +225,10 @@ pub fn tick_enemy_walk(
                 }
             }
             MobBehavior::Aggro { aggro_range, melee_range } => {
-                // Separation force: push away from nearby mob neighbours so
-                // the pack fans out around the player rather than stacking.
-                let my_xz = Vec2::new(pos.x, pos.z);
-                let mut sep = Vec2::ZERO;
-                for (other_xz, other_iid) in &mob_positions {
-                    if *other_iid != iid.0 {
-                        continue;
-                    }
-                    let diff = my_xz - *other_xz;
-                    let dist = diff.length();
-                    if dist > 0.01 && dist < SEPARATION_RADIUS {
-                        sep += diff.normalize() * (1.0 - dist / SEPARATION_RADIUS);
-                    }
-                }
-                // Clamp so a dense crowd doesn't let separation overpower the chase.
-                let sep = sep.clamp_length_max(1.0) * SEPARATION_STRENGTH;
+                let sep = compute_separation_force(Vec2::new(pos.x, pos.z), &mob_positions, iid.0);
 
                 // Nearest player within aggro_range for proximity fallback.
-                // Includes Entity so we can seed initial threat on first engage.
-                let nearest_in_range = player_query
-                    .iter()
-                    .filter(|(_, _, _, piid, _)| piid.0 == iid.0)
-                    .map(|(entity, _, ppos, _, _)| {
-                        let dx = ppos.x - pos.x;
-                        let dz = ppos.z - pos.z;
-                        let dist = (dx * dx + dz * dz).sqrt();
-                        (dist, dx, dz, entity)
-                    })
-                    .filter(|(dist, _, _, _)| *dist <= *aggro_range)
-                    .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                let nearest_in_range = find_nearest_player_in_instance(&player_query, iid.0, &pos, *aggro_range);
 
                 // Seed initial threat when first engaging (threat list empty).
                 if threat_list.entries.is_empty() {

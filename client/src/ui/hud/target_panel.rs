@@ -262,10 +262,9 @@ pub fn compute_threat_display(
     let Some(target) = selected.0 else { return };
 
     let (entries, tot): (Vec<(u64, f32)>, Option<TotDisplay>) =
-        if let Ok((_, health_opt, tl_opt, mob_target_opt)) = mob_q.get(target) {
+        if let Ok((_, _health, tl_opt, mob_target_opt)) = mob_q.get(target) {
             // Directly targeting a mob — show ToT if the mob has a chase target.
             let e = tl_opt.map(|tl| tl.entries.clone()).unwrap_or_default();
-            let _ = health_opt;
             let tot = if let Some(play_id) = mob_target_opt.and_then(|mt| mt.0) {
                 if let Some((entity, _, name, health_opt)) = player_q.iter()
                     .find(|(_, pid, _, _)| pid.0 == play_id)

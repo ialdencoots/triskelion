@@ -248,6 +248,15 @@ pub fn sync_replicated_threat_list(
     }
 }
 
+/// Adds `amount` threat for `player` on `list`, creating an entry if needed.
+fn add_threat(list: &mut ThreatList, player: Entity, amount: f32) {
+    if let Some(entry) = list.entries.iter_mut().find(|e| e.player_entity == player) {
+        entry.threat += amount;
+    } else {
+        list.entries.push(ThreatEntry { player_entity: player, threat: amount });
+    }
+}
+
 /// Apply threat to a mob from a damage event.
 /// Called by the damage system when it is implemented.
 pub fn apply_damage_threat(
@@ -256,12 +265,7 @@ pub fn apply_damage_threat(
     damage: f32,
     modifiers: &ThreatModifiers,
 ) {
-    let generated = damage * modifiers.effective_multiplier();
-    if let Some(entry) = threat_list.entries.iter_mut().find(|e| e.player_entity == attacker) {
-        entry.threat += generated;
-    } else {
-        threat_list.entries.push(ThreatEntry { player_entity: attacker, threat: generated });
-    }
+    add_threat(threat_list, attacker, damage * modifiers.effective_multiplier());
 }
 
 // ── Arc damage ────────────────────────────────────────────────────────────────
@@ -354,10 +358,6 @@ pub fn distribute_healing_threat(
         if mob_iid.0 != instance_id || threat_list.entries.is_empty() {
             continue;
         }
-        if let Some(entry) = threat_list.entries.iter_mut().find(|e| e.player_entity == healer) {
-            entry.threat += generated;
-        } else {
-            threat_list.entries.push(ThreatEntry { player_entity: healer, threat: generated });
-        }
+        add_threat(&mut threat_list, healer, generated);
     }
 }

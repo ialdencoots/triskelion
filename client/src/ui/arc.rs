@@ -58,6 +58,17 @@ const DPS_TILT: f32 = std::f32::consts::FRAC_PI_3; // π/3 = 60°
 /// sin(ARC_THETA_MIN) = sin(π/8) — mirrors the shader constant for computing offsets.
 const SIN_ARC_THETA_MIN: f32 = 0.38268;
 
+/// Decay rate for ghost commit pulse animations (1.0 → 0.0 per second).
+const GHOST_PULSE_DECAY: f32 = 2.0;
+
+/// Arc depth as a fraction of node width — mirrors the shader's `DEPTH` ratio.
+const ARC_DEPTH_RATIO: f32 = 0.310;
+/// Arc half-width as a fraction of node width — mirrors the shader's `HALF_W` ratio.
+const ARC_HALF_W_RATIO: f32 = 0.452;
+/// Horizontal distance from a side arc's center to the central node's center,
+/// as a fraction of the central node width. Drives ghost[0] fly-in animation.
+const SIDE_ARC_CX_OFFSET_RATIO: f32 = 0.24;
+
 /// Client-local record of recent commit positions. Not replicated — maintained
 /// by detecting `in_lockout` false→true transitions in the render system.
 #[derive(Component)]
@@ -207,6 +218,62 @@ pub fn spawn_arc_overlay(
     });
 }
 
+// ── Ghost history helpers ─────────────────────────────────────────────────────
+
+/// Detects a lockout rising edge, records the commit in `ghost` (and optionally
+/// the central history), then decays the commit pulse.
+///
+/// `push_to_ghost_trail` — true for the primary arc (which shows its own trail
+/// in Tank/Heal stance), false for the secondary arc (central-only history).
+fn tick_ghost_history(
+    ghost: &mut GhostArcHistory,
+    in_lockout: bool,
+    commit_theta: f32,
+    push_to_ghost_trail: bool,
+    ghost_max: usize,
+    central: Option<&mut CentralGhostHistory>,
+    tilt: f32,
+    dt: f32,
+) {
+    if !ghost.prev_in_lockout && in_lockout {
+        if push_to_ghost_trail {
+            ghost.entries.insert(0, commit_theta);
+            ghost.entries.truncate(ghost_max);
+        }
+        ghost.commit_theta = commit_theta;
+        ghost.commit_pulse = 1.0;
+        if let Some(c) = central {
+            let old_scroll_t = (c.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
+            c.scroll_carry = old_scroll_t * (1.0 + c.scroll_carry);
+            c.entries.insert(0, commit_theta);
+            c.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
+            c.commit_pulse = 1.0;
+            c.last_commit_tilt = tilt;
+        }
+    }
+    ghost.prev_in_lockout = in_lockout;
+    ghost.commit_pulse = (ghost.commit_pulse - dt * GHOST_PULSE_DECAY).max(0.0);
+}
+
+/// Computes the vertical ghost stack offset and horizontal source-cx offset (px)
+/// for the central ghost node, based on the DPS arc geometry.
+fn compute_central_ghost_layout(node_w: f32, last_commit_tilt: f32) -> (f32, f32) {
+    let depth_px  = node_w * ARC_DEPTH_RATIO;
+    let half_w_px = node_w * ARC_HALF_W_RATIO;
+    let t_sin = DPS_TILT.sin();
+    let t_cos = DPS_TILT.cos();
+    let arc_y_off = (half_w_px * t_sin - depth_px * SIN_ARC_THETA_MIN * t_cos).max(0.0);
+    let ghost_y_offset = arc_y_off + t_cos * depth_px + 1.0;
+    // Primary  left=37% → center 62% → +SIDE_ARC_CX_OFFSET_RATIO of central node width
+    // Secondary left=13% → center 38% → -SIDE_ARC_CX_OFFSET_RATIO
+    let source_cx_offset = if last_commit_tilt < 0.0 {
+        node_w * SIDE_ARC_CX_OFFSET_RATIO
+    } else {
+        -node_w * SIDE_ARC_CX_OFFSET_RATIO
+    };
+    (ghost_y_offset, source_cx_offset)
+}
+
 // ── Render ────────────────────────────────────────────────────────────────────
 
 pub fn render_arc(
@@ -265,25 +332,17 @@ pub fn render_arc(
             central.prev_stance = combat.active_stance;
         }
 
-        // Primary commit detection — push to central history; keep entries for
-        // Tank/Heal ghost trail (suppressed in DPS via sparse ghost below).
-        if !ghost.prev_in_lockout && arc.in_lockout {
-            ghost.entries.insert(0, arc.last_commit_theta);
-            ghost.entries.truncate(MAX_GHOST_ENTRIES);
-            ghost.commit_theta = arc.last_commit_theta;
-            ghost.commit_pulse = 1.0;
-            if let Some(ref mut central) = central_opt {
-                // Carry over any unfinished scroll so ghosts don't teleport.
-                let old_scroll_t = (central.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
-                central.scroll_carry = old_scroll_t * (1.0 + central.scroll_carry);
-                central.entries.insert(0, arc.last_commit_theta);
-                central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
-                central.commit_pulse = 1.0;
-                central.last_commit_tilt = -DPS_TILT;
-            }
-        }
-        ghost.prev_in_lockout = arc.in_lockout;
-        ghost.commit_pulse = (ghost.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+        // Primary commit detection — push to ghost trail and central history.
+        tick_ghost_history(
+            &mut ghost,
+            arc.in_lockout,
+            arc.last_commit_theta,
+            true,
+            MAX_GHOST_ENTRIES,
+            central_opt.as_deref_mut(),
+            -DPS_TILT,
+            time.delta_secs(),
+        );
 
         // Primary arc — in DPS pass a sparse ghost (commit pulse/theta only, no trail).
         if let Ok((mut vis, mut node, mat_handle, computed)) = primary_q.single_mut() {
@@ -326,21 +385,16 @@ pub fn render_arc(
                 if let Some(secondary) = secondary_opt {
                     // Secondary commit detection — push to central history only.
                     if let Some(ref mut sec_ghost) = sec_ghost_opt {
-                        if !sec_ghost.0.prev_in_lockout && secondary.0.in_lockout {
-                            sec_ghost.0.commit_theta = secondary.0.last_commit_theta;
-                            sec_ghost.0.commit_pulse = 1.0;
-                            if let Some(ref mut central) = central_opt {
-                                let old_scroll_t = (central.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
-                                central.scroll_carry = old_scroll_t * (1.0 + central.scroll_carry);
-                                central.entries.insert(0, secondary.0.last_commit_theta);
-                                central.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
-                                central.commit_pulse = 1.0;
-                                central.last_commit_tilt = DPS_TILT;
-                            }
-                        }
-                        sec_ghost.0.prev_in_lockout = secondary.0.in_lockout;
-                        sec_ghost.0.commit_pulse =
-                            (sec_ghost.0.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+                        tick_ghost_history(
+                            &mut sec_ghost.0,
+                            secondary.0.in_lockout,
+                            secondary.0.last_commit_theta,
+                            false,
+                            MAX_GHOST_ENTRIES,
+                            central_opt.as_deref_mut(),
+                            DPS_TILT,
+                            time.delta_secs(),
+                        );
                     }
 
                     if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
@@ -366,7 +420,7 @@ pub fn render_arc(
 
         // Decay central animation pulse.
         if let Some(ref mut central) = central_opt {
-            central.commit_pulse = (central.commit_pulse - time.delta_secs() * 2.0).max(0.0);
+            central.commit_pulse = (central.commit_pulse - time.delta_secs() * GHOST_PULSE_DECAY).max(0.0);
         }
 
         // Central ghost stack — visible in DPS only.
@@ -383,23 +437,8 @@ pub fn render_arc(
                         central_opt.as_ref().map_or(0.0, |c| c.last_commit_tilt);
                     let scroll_carry =
                         central_opt.as_ref().map_or(0.0, |c| c.scroll_carry);
-                    // Dynamic offset: mirrors the shader's arc y_offset + nadir + aura.
-                    let depth_px  = size.x * 0.310;
-                    let half_w_px = size.x * 0.452;
-                    let t_sin     = DPS_TILT.sin();
-                    let t_cos     = DPS_TILT.cos();
-                    let arc_y_off = (half_w_px * t_sin - depth_px * SIN_ARC_THETA_MIN * t_cos).max(0.0);
-                    let ghost_y_offset = arc_y_off + t_cos * depth_px + 1.0;
-                    // Horizontal offset from source arc's cx to this node's cx, in
-                    // local pixels. Derived from arc positions (all 50% wide):
-                    //   primary  left=37% → center 62% of parent → +0.24*node_w
-                    //   secondary left=13% → center 38% of parent → -0.24*node_w
-                    //   central  left=25% → center 50% of parent
-                    let source_cx_offset = if last_commit_tilt < 0.0 {
-                        size.x * 0.24   // primary is to the right
-                    } else {
-                        -size.x * 0.24  // secondary is to the left
-                    };
+                    let (ghost_y_offset, source_cx_offset) =
+                        compute_central_ghost_layout(size.x, last_commit_tilt);
                     mat.params = central_ghost_params(
                         entries, arc.amplitude, size.x, size.y, t,
                         ghost_y_offset, commit_pulse, last_commit_tilt,
