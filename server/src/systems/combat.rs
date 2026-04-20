@@ -291,7 +291,7 @@ fn apply_arc_damage(
 ) {
     const BASE_DAMAGE: f32 = 15.0;
     /// Melee reach in world units.
-    const MELEE_RANGE: f32 = 3.0;
+    const MELEE_RANGE: f32 = 4.0;
     // Allow commits within a 120° cone (cos 60° = 0.5) — forgiving but not trivial.
     const FACING_COS_MIN: f32 = 0.5;
 

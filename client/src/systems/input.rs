@@ -96,19 +96,22 @@ pub fn gather_and_send_input(
     // The physics resting height is ~1.95 m above the terrain noise floor, so the
     // 2.2 m threshold only fires once the player is genuinely above the ground.
     // When grounded, we send the canonical terrain + 1.1 with vy = 0.
-    let (y, vy) = player_query
+    let (y, vy, player_yaw) = player_query
         .single()
         .map(|(tf, lv)| {
             let terrain_y = sample_height(&terrain.noise, tf.translation.x, tf.translation.z, &terrain.cfg);
             let height_above = tf.translation.y - terrain_y;
             let is_airborne = lv.y.abs() > 1.0 || height_above > 2.2;
-            if is_airborne {
+            let (y, vy) = if is_airborne {
                 (tf.translation.y, lv.y)
             } else {
                 (terrain_y + 1.1, 0.0)
-            }
+            };
+            let fwd = tf.rotation * Vec3::NEG_Z;
+            let yaw = (-fwd.x).atan2(-fwd.z);
+            (y, vy, yaw)
         })
-        .unwrap_or((0.0, 0.0));
+        .unwrap_or((0.0, 0.0, *char_facing));
 
     // 1/2/3 enter Tank/DPS/Heal; Escape exits any active stance.
     let enter_stance = if keyboard.just_pressed(KeyCode::Digit1) {
@@ -127,10 +130,8 @@ pub fn gather_and_send_input(
         .map(|(tf, _)| (tf.translation.x, tf.translation.z))
         .unwrap_or((0.0, 0.0));
 
-    // Right mouse locks facing to camera; otherwise facing is unchanged.
-    if right_mouse {
-        *char_facing = orbit.yaw;
-    }
+    // Right mouse locks facing to camera; otherwise track the player's actual rotation.
+    *char_facing = if right_mouse { orbit.yaw } else { player_yaw };
 
     let primary_commit = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
     let secondary_commit = bindings.0.get(3).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
