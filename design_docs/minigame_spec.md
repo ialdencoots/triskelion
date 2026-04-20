@@ -84,78 +84,55 @@ Mid-zone commits neither increment nor reset the streak.
 
 ---
 
-### DAG
+### DAG / Grid
 
-#### Overview
-The DAG is not a fixed routing structure that determines which action fires. Instead, each
-action activation presents its own DAG. When the player activates an action, that action's
-specific DAG begins flowing. The DAG's traversal applies modifiers to the action's base
-output — branch choices determine *how* the action executes, not *what* fires. The action
-fires at the terminal node regardless of path taken; the path determines the modifier set
-applied.
+> Full specification: `physical_dag_grid.md`. The summary below reflects the current
+> design. Tank and Healer use the flow DAG; Duelist uses a traversal grid that replaces
+> the arc display on activation.
 
-#### World axis
-Flow advances autonomously from entry node to terminal node at a fixed speed, regardless of
-player input. The graph structure is defined per action and may contain 1–3 branch points.
-At each branch point, 2–4 paths are available. If no input is received before flow passes a
-branch node, flow auto-routes to the default path (the first path, lowest modifier value).
+#### Tank / Healer — Flow DAG
 
-Branch count and graph depth are action-specific design parameters. More complex actions
-may have deeper graphs with more branch points; simpler actions may have a single branch
-or none.
+Flow advances autonomously from entry node to terminal node. Each action activation
+presents its own DAG with up to 3 branch points. At each branch point, up to 3 paths are
+available. If no input is received before flow passes a branch node, flow auto-routes to
+the default path.
 
-#### Player input
-One input per branch point — pressing the branch input when flow is within the **branch
-window** of an upcoming node selects the next path in the rotation. The branch window opens
-at a fixed distance before the node and closes as flow passes it. Pressing outside the
-window has no effect.
+**Streak interaction**: streak determines how many of the 3 paths are available at each
+branch point. Low streak (0–2): only the default path. Mid streak (3–6): default plus one
+elevated path. High streak (7+): all 3 paths, including any premium option. Unavailable
+paths are visually present but dimmed.
 
-**Timing bonus**: pressing closer to the node (later within the open window) applies a
-higher timing multiplier to the modifier value delivered by that branch:
+**Timing bonus**: pressing the branch input later within the junction window (closer to the
+node) applies a higher magnitude multiplier to the modifier delivered by that branch.
+Missing the window auto-routes to the default path with no additional penalty.
 
-```
-timing_bonus = lerp(1.0, max_bonus, (input_time - window_open) / window_duration)
-```
+#### Duelist — Traversal Grid
 
-where `max_bonus` is a design parameter (TBD at balance time, suggested ~1.5×).
+The Duelist does not use the flow DAG. Instead, arc streak accumulates as a step budget.
+When streak breaks (apex commit) or hits a configurable cap, the arc display is replaced
+by a rectangular grid overlay. The player routes through the grid directionally, collecting
+bonus nodes, and exits the opposite edge to resolve bonuses. Each step costs one streak
+arc. Dead-ends (no valid moves before exit) result in a blowout: all collected bonuses
+lost, streak consumed with no output. Bonus magnitude per node is derived from the arc
+commit quality history buffer.
 
-#### Branch modifiers
-Paths at a branch node each carry a distinct modifier type, not a generic value tier.
-Example modifier types (exact set per action TBD at design time):
-
-- Base damage increment
-- Damage-over-time application
-- Minor stun on hit
-- Cooldown reduction on next action
-- Healing component
-- Aggro bonus
-
-The modifier set available at a branch point is action-specific. Not all branch points
-offer the same options — some may offer a choice between two damage variants, others between
-a damage modifier and a utility modifier.
-
-**Streak interaction**: the current arc streak determines the **quality tier** of paths
-available at each branch point. At low streak (0–2), only base modifier variants are
-available. At higher streak levels, additional or stronger modifier options unlock at branch
-points. This means a player maintaining clean nadir commits gains access to more impactful
-branch options, not a larger timing window. The paths are visually distinct at different
-streak tiers — unavailable paths are dimmed or absent.
-
-#### Action gating
+#### Action gating (all roles)
 Action activation is gated by **attack timing** alone — each action has an internal
-cooldown independent of arc or DAG state. There is no resource cost. The arc and DAG
-mechanics determine output quality and modifier access, not whether the action can fire.
+cooldown independent of arc or DAG / grid state. There is no resource cost.
 
 ---
 
 ### Mechanic interaction summary (Physical)
 
-Arc commit quality → streak count → determines which DAG modifier paths are available.
-Arc ghost history → visual record of recent commit quality → player self-assessment signal.
-Action activation → presents action-specific DAG → flow advances autonomously.
-DAG branch inputs → apply modifier set to action output → timing bonus scales modifier value.
-Disruption → counter-directional impulse on dot → degrades commit quality → reduces streak
-→ limits available DAG modifier paths.
+Arc commit quality → streak count → gates DAG branch availability (Tank/Healer) or
+accumulates step budget (Duelist).
+Arc commit quality history → per-step bonus magnitude on Duelist grid traversal.
+Streak break or cap → Duelist grid activates; arc display replaced by grid overlay.
+DAG branch inputs (Tank/Healer) → timing bonus scales modifier value; miss auto-routes.
+Grid traversal (Duelist) → bonus nodes collected; dead-end blowout loses all bonuses.
+Disruption → counter-directional arc impulse → degrades commit quality → reduces streak
+→ collapses DAG branch options (Tank/Healer) or reduces bonus magnitudes on next grid run
+(Duelist).
 
 ---
 

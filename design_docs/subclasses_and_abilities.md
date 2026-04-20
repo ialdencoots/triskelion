@@ -15,10 +15,12 @@ and **interrupt** as universal combat tools.
 
 ## Class: Physical
 
-**Minigame mechanics**: Arc (continuous performance signal) + DAG (per-action modifier
-routing). Arc commit quality drives streak, which determines which DAG branch paths are
-available. Disruption applies a counter-directional impulse to the arc dot, degrading
-coherence and streak.
+**Minigame mechanics**: Arc (continuous performance signal) + DAG or Grid (modifier
+routing, role-dependent). Arc commit quality drives streak. Tank and Healer use a flow DAG
+where streak gates branch availability at timed junctions. The Duelist uses a traversal
+grid: streak accumulates as a step budget and auto-activates the grid on break or cap.
+Disruption applies a counter-directional impulse to the arc dot, degrading coherence and
+streak.
 
 ---
 
@@ -72,10 +74,11 @@ proof of mastery. Disruptions are existential to the Duelist in a way they are n
 Bulwark: the entire damage profile depends on streak.
 
 **Stance: Edge Form**
-Sustained single-target damage mode. DAG branches at high streak unlock damage-over-time
-stacking and multi-hit modifiers, producing a pronounced ramp profile: weak opener,
-accelerating cascade as streak climbs. A cold or disrupted Duelist produces low output; a
-Duelist in full flow is the ceiling of Physical damage throughput.
+Sustained single-target damage mode. Streak accumulates as a step budget for the traversal
+grid, which auto-activates on streak break or cap. A larger streak at activation means more
+steps — more bonus nodes reachable and a richer routing problem. A cold or disrupted
+Duelist activates a small grid with degraded bonus magnitudes; a Duelist in full flow cashes
+in a large, high-quality run. Bonus type distribution is shaped by skill tree choices.
 
 ---
 
@@ -83,7 +86,7 @@ Duelist in full flow is the ceiling of Physical damage throughput.
 
 | Ability | Type | Description |
 |---|---|---|
-| Iron Stance / Flowing Guard / Edge Form | Stance | Role output mode; activates Arc + DAG minigame |
+| Iron Stance / Flowing Guard / Edge Form | Stance | Role output mode; activates Arc + DAG minigame (Tank/Healer) or Arc + Grid (Duelist) |
 | **Lunge** | Mobility | Committed directional burst. Linear, self-propelled, with brief projectile invulnerability mid-travel. Aggressive repositioning — closes distance or crosses gaps. No intangibility on arrival; you are responsible for landing position. |
 | **Stun** | CC | Removes enemy agency entirely for a short duration. No movement, no action. |
 | Taunt | Utility | Forces enemy aggro onto caster for a duration. The Intercessor variant is targeted — aggro is redirected from a specified ally onto a specified target (typically the tank) rather than unconditionally onto the caster. |
