@@ -58,21 +58,30 @@ pub fn gather_and_send_input(
     let cam_forward = yaw_rot * Vec3::NEG_Z;
     let cam_right = yaw_rot * Vec3::X;
 
-    let both_mouse =
-        mouse_buttons.pressed(MouseButton::Left) && mouse_buttons.pressed(MouseButton::Right);
+    let right_mouse = mouse_buttons.pressed(MouseButton::Right);
+    let both_mouse = mouse_buttons.pressed(MouseButton::Left) && right_mouse;
+
+    let player_yaw_rot = Quat::from_rotation_y(*char_facing);
+    let player_forward = player_yaw_rot * Vec3::NEG_Z;
+    let player_right   = player_yaw_rot * Vec3::X;
+    let (fwd_axis, right_axis) = if right_mouse {
+        (cam_forward, cam_right)
+    } else {
+        (player_forward, player_right)
+    };
 
     let move_3d = if both_mouse {
-        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { cam_forward };
+        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { fwd_axis };
         let mut dir = forward;
-        if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
         if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
     } else {
         let mut dir = Vec3::ZERO;
-        if keyboard.pressed(KeyCode::KeyE) { dir += cam_forward; }
-        if keyboard.pressed(KeyCode::KeyD) { dir -= cam_forward; }
-        if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
+        if keyboard.pressed(KeyCode::KeyE) { dir += fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyD) { dir -= fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
         if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
     };
 
@@ -118,12 +127,9 @@ pub fn gather_and_send_input(
         .map(|(tf, _)| (tf.translation.x, tf.translation.z))
         .unwrap_or((0.0, 0.0));
 
-    // When both mouse buttons are held, always face camera regardless of movement.
-    let is_backpedaling = keyboard.pressed(KeyCode::KeyD) && !keyboard.pressed(KeyCode::KeyE);
-    if both_mouse {
+    // Right mouse locks facing to camera; otherwise facing is unchanged.
+    if right_mouse {
         *char_facing = orbit.yaw;
-    } else if move_3d.length_squared() > 0.01 && !is_backpedaling {
-        *char_facing = (-move_3d.x).atan2(-move_3d.z);
     }
 
     let primary_commit = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);

@@ -14,35 +14,39 @@ pub fn handle_input(
 ) {
     let Ok((mut controller, mut transform)) = player_query.single_mut() else { return };
 
-    let both_mouse = mouse_buttons.pressed(MouseButton::Left) && mouse_buttons.pressed(MouseButton::Right);
+    let right_mouse = mouse_buttons.pressed(MouseButton::Right);
+    let both_mouse = mouse_buttons.pressed(MouseButton::Left) && right_mouse;
 
     let yaw_rot = Quat::from_rotation_y(orbit.yaw);
     let cam_forward = yaw_rot * Vec3::NEG_Z;
     let cam_right = yaw_rot * Vec3::X;
 
-    let (move_dir, face_dir) = if both_mouse {
-        // Backward key cancels the mouse-button forward; lateral keys still apply.
-        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { cam_forward };
-        let mut dir = forward;
-        if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
-        let movement = if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO };
-        // Always face camera direction regardless of which keys are held.
-        (movement, cam_forward)
+    // When right mouse is held, movement axes and facing track the camera.
+    // Otherwise, movement is relative to the player's own facing and rotation is unchanged.
+    let player_forward = transform.rotation * Vec3::NEG_Z;
+    let player_right   = transform.rotation * Vec3::X;
+    let (fwd_axis, right_axis, face_dir) = if right_mouse {
+        (cam_forward, cam_right, cam_forward)
     } else {
-        let mut dir = Vec3::ZERO;
-        if keyboard.pressed(KeyCode::KeyE) { dir += cam_forward; }
-        if keyboard.pressed(KeyCode::KeyD) { dir -= cam_forward; }
-        if keyboard.pressed(KeyCode::KeyS) { dir -= cam_right; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += cam_right; }
-        let movement = if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO };
-        // Backpedaling: keep facing forward rather than turning around.
-        let is_backpedaling = keyboard.pressed(KeyCode::KeyD) && !keyboard.pressed(KeyCode::KeyE);
-        let face = if is_backpedaling { cam_forward } else { movement };
-        (movement, face)
+        (player_forward, player_right, player_forward)
     };
 
-    // Rotate character to face the appropriate direction.
+    let move_dir = if both_mouse {
+        // Both buttons: auto-forward, D cancels it, S/F strafe.
+        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { fwd_axis };
+        let mut dir = forward;
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
+        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
+    } else {
+        let mut dir = Vec3::ZERO;
+        if keyboard.pressed(KeyCode::KeyE) { dir += fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyD) { dir -= fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
+        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
+    };
+
     if face_dir.length_squared() > 0.01 {
         let target_yaw = (-face_dir.x).atan2(-face_dir.z);
         transform.rotation = Quat::from_rotation_y(target_yaw);
