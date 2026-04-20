@@ -25,6 +25,11 @@ const JITTER_X: f32 = 0.55;
 const OUTLINE_PX: f32 = 0.5;
 /// Font size for damage number text.
 const FONT_SIZE: f32 = 18.0;
+/// Initial font scale for a crit. The number spawns at this size and shrinks
+/// back to `FONT_SIZE` over `CRIT_POP_DURATION` for a "pop" effect.
+const CRIT_POP_START_SCALE: f32 = 2.0;
+/// Seconds over which a crit shrinks from its peak size down to normal.
+const CRIT_POP_DURATION: f32 = 0.18;
 
 /// A live floating damage number. Lives on a parent `Node` that carries
 /// positioning; the actual visible text is split across five children — four
@@ -34,6 +39,11 @@ pub struct FloatingNumber {
     target: Entity,
     spawn_time: f32,
     offset_x: f32,
+    /// When true, the updater animates the font size from
+    /// `CRIT_POP_START_SCALE × FONT_SIZE` down to `FONT_SIZE` over
+    /// `CRIT_POP_DURATION`. No color change — the type hue still carries the
+    /// identity; the pop carries the "this was special" beat.
+    is_crit: bool,
 }
 
 /// A single text layer of a floating number (one outline copy or the main
@@ -97,6 +107,8 @@ pub fn spawn_damage_numbers(
         // Round to nearest integer for display — sub-integer damage looks noisy.
         let display = msg.amount.round().max(0.0) as i32;
         let label = display.to_string();
+        // Crits spawn at the enlarged size; the updater shrinks them back down.
+        let initial_font_size = if msg.is_crit { FONT_SIZE * CRIT_POP_START_SCALE } else { FONT_SIZE };
         let seed = SPAWN_COUNTER.fetch_add(1, Ordering::Relaxed);
         let offset_x = jitter_from_seed(seed) * JITTER_X;
 
@@ -106,6 +118,7 @@ pub fn spawn_damage_numbers(
                     target: msg.target,
                     spawn_time: now,
                     offset_x,
+                    is_crit: msg.is_crit,
                 },
                 Node {
                     position_type: PositionType::Absolute,
@@ -130,7 +143,7 @@ pub fn spawn_damage_numbers(
                             ..default()
                         },
                         Text::new(label.clone()),
-                        TextFont { font_size: FONT_SIZE, ..default() },
+                        TextFont { font_size: initial_font_size, ..default() },
                         TextColor(outline),
                     ));
                 }
@@ -159,7 +172,7 @@ pub fn update_damage_numbers(
     camera_query: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     enemy_query: Query<&Transform, With<EnemyMarker>>,
     mut parent_query: Query<(Entity, &FloatingNumber, &mut Node, &mut Visibility, &Children)>,
-    mut part_query: Query<(&FloatingNumberPart, &mut TextColor)>,
+    mut part_query: Query<(&FloatingNumberPart, &mut TextColor, &mut TextFont)>,
     mut commands: Commands,
 ) {
     let Ok((camera, cam_tf)) = camera_query.single() else { return };
@@ -198,9 +211,24 @@ pub fn update_damage_numbers(
             1.0 - (progress - HOLD_FRACTION) / (1.0 - HOLD_FRACTION)
         };
 
+        // Crit pop: shrink from enlarged size back to FONT_SIZE over
+        // CRIT_POP_DURATION with an ease-out curve so the settle feels soft.
+        // Non-crits hold at FONT_SIZE (already their spawn size).
+        let font_size = if number.is_crit && elapsed < CRIT_POP_DURATION {
+            let t = (elapsed / CRIT_POP_DURATION).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - t).powi(2);
+            let start = FONT_SIZE * CRIT_POP_START_SCALE;
+            start + (FONT_SIZE - start) * eased
+        } else {
+            FONT_SIZE
+        };
+
         for child in children.iter() {
-            if let Ok((part, mut color)) = part_query.get_mut(child) {
+            if let Ok((part, mut color, mut font)) = part_query.get_mut(child) {
                 *color = TextColor(part.base_color.with_alpha(alpha));
+                if font.font_size != font_size {
+                    font.font_size = font_size;
+                }
             }
         }
     }

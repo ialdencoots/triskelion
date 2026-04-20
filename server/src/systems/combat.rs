@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
@@ -275,6 +277,44 @@ pub fn apply_damage_threat(
     add_threat(threat_list, attacker, damage * modifiers.effective_multiplier());
 }
 
+// ── Combat RNG ───────────────────────────────────────────────────────────────
+
+/// Monotonic counter feeding the combat RNG. Any roll (crit, future: miss,
+/// variance) should draw from `next_unit`.
+static COMBAT_RNG: AtomicU64 = AtomicU64::new(0xDEADBEEF_CAFEBABE);
+
+/// Returns a pseudo-random f32 in [0.0, 1.0). SplitMix64 scramble — cheap,
+/// non-cryptographic, good enough for gameplay rolls. Not deterministic across
+/// runs (counter starts from a fixed seed but order of calls varies).
+fn next_unit() -> f32 {
+    let seed = COMBAT_RNG.fetch_add(1, Ordering::Relaxed);
+    let mut x = seed.wrapping_add(0x9E3779B97F4A7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
+    x ^= x >> 31;
+    (x as u32) as f32 / (u32::MAX as f32 + 1.0)
+}
+
+/// Quality at/above which a Physical arc commit can roll a crit.
+const CRIT_NADIR_THRESHOLD: f32 = 0.85;
+/// Max crit chance for quality strictly below 1.0 (the shoulder). Quality of
+/// exactly 1.0 still crits 100% of the time (handled in `crit_chance`).
+const CRIT_SHOULDER_CHANCE: f32 = 0.25;
+/// Damage multiplier applied when a hit crits.
+const CRIT_MULTIPLIER: f32 = 2.0;
+
+/// Quality→crit-chance curve: linear 0%→65% over [0.85, 1.0), then a hard jump
+/// to 100% at exactly 1.0. Rewards precision with a discontinuity at perfect.
+fn crit_chance(quality: f32) -> f32 {
+    if quality >= 1.0 {
+        1.0
+    } else if quality >= CRIT_NADIR_THRESHOLD {
+        (quality - CRIT_NADIR_THRESHOLD) / (1.0 - CRIT_NADIR_THRESHOLD) * CRIT_SHOULDER_CHANCE
+    } else {
+        0.0
+    }
+}
+
 // ── Arc damage emission ──────────────────────────────────────────────────────
 
 /// Gates an arc commit against range/facing/alive checks and, on pass, emits a
@@ -337,9 +377,19 @@ fn emit_arc_damage(
         return;
     }
 
-    damage_writer.write(DamageEvent::hit(
-        attacker, mob_entity, BASE_DAMAGE, DamageType::Physical, quality,
-    ));
+    let is_crit = next_unit() < crit_chance(quality);
+    let multipliers = if is_crit { CRIT_MULTIPLIER } else { 1.0 };
+
+    damage_writer.write(DamageEvent {
+        attacker,
+        target: mob_entity,
+        base: BASE_DAMAGE,
+        ty: DamageType::Physical,
+        additive: 0.0,
+        multipliers,
+        quality,
+        is_crit,
+    });
 }
 
 // ── Damage resolution ────────────────────────────────────────────────────────
@@ -391,7 +441,12 @@ pub fn apply_damage_events(
         // Floating damage numbers are a personal cue — send only to the
         // attacker's client. Other players will see the hit through the
         // forthcoming combat log, not as a world-space popup.
-        let payload = DamageNumberMsg { target: ev.target, amount: final_dmg, ty: ev.ty };
+        let payload = DamageNumberMsg {
+            target: ev.target,
+            amount: final_dmg,
+            ty: ev.ty,
+            is_crit: ev.is_crit,
+        };
         for (link, mut sender) in number_senders.iter_mut() {
             if link.0 == ev.attacker {
                 sender.send::<GameChannel>(payload.clone());

@@ -21,10 +21,14 @@ pub struct DamageEvent {
     pub additive: f32,
     pub multipliers: f32,
     pub quality: f32,
+    /// Set by the damage source when a hit is a critical. Informational — the
+    /// actual crit damage scaling is already folded into `multipliers` by the
+    /// source. This flag exists so the client can render crits distinctly.
+    pub is_crit: bool,
 }
 
 impl DamageEvent {
-    /// Convenience for a single-hit event with no modifier stack.
+    /// Convenience for a single-hit event with no modifier stack. Non-crit.
     pub fn hit(attacker: Entity, target: Entity, base: f32, ty: DamageType, quality: f32) -> Self {
         Self {
             attacker,
@@ -34,6 +38,7 @@ impl DamageEvent {
             additive: 0.0,
             multipliers: 1.0,
             quality,
+            is_crit: false,
         }
     }
 }

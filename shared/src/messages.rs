@@ -27,11 +27,13 @@ pub struct PlayerDespawnedMsg {
 
 /// Broadcast after a `DamageEvent` resolves: tells clients to pop a floating
 /// number above `target`. Amount is post-resist final damage. Type drives color.
+/// `is_crit` selects the crit visual treatment (larger, white-hot, "!" suffix).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DamageNumberMsg {
     pub target: Entity,
     pub amount: f32,
     pub ty: DamageType,
+    pub is_crit: bool,
 }
 
 /// Sent to a client when the server assigns them to an instance.
