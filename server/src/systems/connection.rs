@@ -203,6 +203,7 @@ pub fn process_instance_requests(
         With<Connected>,
     >,
     mut instance_id_q: Query<&mut InstanceId>,
+    mut combat_q: Query<&mut CombatState>,
     mut reg: ResMut<InstanceRegistry>,
 ) {
     for (_link_entity, remote_id, entity_link, mut inst_link, mut receiver, mut instance_sender) in
@@ -256,6 +257,11 @@ pub fn process_instance_requests(
             // Update the player's InstanceId so instance-based filtering works.
             if let Ok(mut inst_id) = instance_id_q.get_mut(player_entity) {
                 inst_id.0 = new_instance_id;
+            }
+
+            // Reset stance on instance entry; ghost arc history clears automatically via stance-change detection.
+            if let Ok(mut combat) = combat_q.get_mut(player_entity) {
+                combat.active_stance = None;
             }
 
             // Update the link's instance tracking for disconnect cleanup.
