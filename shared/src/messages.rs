@@ -2,6 +2,7 @@ use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::components::combat::DamageType;
 use crate::components::player::{Class, SelectedMobOrPlayer, Subclass};
 use crate::instances::{InstanceKind, TerrainConfig};
 
@@ -22,6 +23,15 @@ pub struct PlayerSpawnedMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerDespawnedMsg {
     pub client_id: u64,
+}
+
+/// Broadcast after a `DamageEvent` resolves: tells clients to pop a floating
+/// number above `target`. Amount is post-resist final damage. Type drives color.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct DamageNumberMsg {
+    pub target: Entity,
+    pub amount: f32,
+    pub ty: DamageType,
 }
 
 /// Sent to a client when the server assigns them to an instance.
@@ -60,6 +70,16 @@ pub struct RequestInstanceMsg {
     pub kind: InstanceKind,
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// DEV-ONLY — REMOVE BEFORE SHIP
+// Keys 4/5/6 on the client send this to apply a DoT of the chosen type to the
+// player's currently selected mob. Grep for `DEV-ONLY` to find all call sites.
+// ═════════════════════════════════════════════════════════════════════════════
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct DevApplyDotMsg {
+    pub ty: DamageType,
+}
+
 // ── MapEntities ───────────────────────────────────────────────────────────────
 
 impl MapEntities for PlayerSpawnedMsg {
@@ -73,5 +93,11 @@ impl MapEntities for SelectTargetMsg {
         if let Some(SelectedMobOrPlayer::Mob(ref mut e)) = self.0 {
             *e = mapper.get_mapped(*e);
         }
+    }
+}
+
+impl MapEntities for DamageNumberMsg {
+    fn map_entities<M: EntityMapper>(&mut self, mapper: &mut M) {
+        self.target = mapper.get_mapped(self.target);
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod channels;
 pub mod components;
+pub mod events;
 pub mod inputs;
 pub mod instances;
 pub mod messages;
@@ -19,7 +20,7 @@ impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         use channels::{GameChannel, PositionChannel};
         use components::{
-            combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList},
+            combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList, Resistances},
             enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
@@ -29,7 +30,7 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        use messages::{DamageNumberMsg, DevApplyDotMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
 
         // ── Channels ──────────────────────────────────────────────────────────
         app.add_channel::<GameChannel>(ChannelSettings {
@@ -56,6 +57,10 @@ impl Plugin for SharedPlugin {
         app.register_message::<RequestInstanceMsg>()
             .add_direction(NetworkDirection::ClientToServer);
 
+        // DEV-ONLY — REMOVE: keys 4/5/6 trigger a typed DoT on the selected mob.
+        app.register_message::<DevApplyDotMsg>()
+            .add_direction(NetworkDirection::ClientToServer);
+
         app.register_message::<SelectTargetMsg>()
             .add_direction(NetworkDirection::ClientToServer)
             .add_map_entities();
@@ -69,6 +74,10 @@ impl Plugin for SharedPlugin {
 
         app.register_message::<InstanceEnteredMsg>()
             .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<DamageNumberMsg>()
+            .add_direction(NetworkDirection::ServerToClient)
+            .add_map_entities();
 
         // ── Components: player identity (replicated once at spawn) ─────────────
         app.register_component::<GroupId>()
@@ -126,6 +135,10 @@ impl Plugin for SharedPlugin {
         app.register_component::<CombatState>();
         app.register_component::<AbilityCooldowns>();
         app.register_component::<ReplicatedThreatList>();
+        app.register_component::<Resistances>();
+
+        // ── Messages (local, non-networked) ──────────────────────────────────
+        app.add_message::<events::combat::DamageEvent>();
 
         app.register_component::<PlayerSelectedTarget>()
             .add_map_entities();

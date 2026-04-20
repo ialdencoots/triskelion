@@ -1,16 +1,18 @@
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList};
+use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Health, ReplicatedThreatList, Resistances};
 use shared::components::enemy::{EnemyMarker, EnemyPosition};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
 use shared::components::player::{
     PlayerId, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
 };
+use shared::channels::GameChannel;
+use shared::events::combat::DamageEvent;
 use shared::inputs::PlayerInput;
 use shared::instances::{find_def, sample_height};
-use shared::messages::SelectTargetMsg;
+use shared::messages::{DamageNumberMsg, SelectTargetMsg};
 
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
@@ -84,16 +86,16 @@ pub fn process_player_inputs(
         Option<&mut ArcState>,
         Option<&mut SecondaryArcState>,
         Option<&PlayerSelectedTarget>,
-        &ThreatModifiers,
     ), With<PlayerId>>,
-    mut enemy_query: Query<(&EnemyPosition, Option<&mut Health>, Option<&mut ThreatList>), With<EnemyMarker>>,
+    enemy_query: Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
+    mut damage_writer: MessageWriter<DamageEvent>,
 ) {
     let dt = time.delta_secs();
 
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt, threat_mods)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -135,14 +137,14 @@ pub fn process_player_inputs(
                         arc.last_commit_quality, input.facing_yaw);
                     process_arc_commit(arc);
                     if was_unlocked {
-                        apply_arc_damage(
+                        emit_arc_damage(
                             arc.last_commit_quality,
                             input.facing_yaw,
                             link.0,
-                            threat_mods,
                             &pos,
                             target_opt,
-                            &mut enemy_query,
+                            &enemy_query,
+                            &mut damage_writer,
                         );
                     }
                 }
@@ -152,14 +154,14 @@ pub fn process_player_inputs(
                     let was_unlocked = !secondary.0.in_lockout;
                     process_arc_commit(&mut secondary.0);
                     if was_unlocked {
-                        apply_arc_damage(
+                        emit_arc_damage(
                             secondary.0.last_commit_quality,
                             input.facing_yaw,
                             link.0,
-                            threat_mods,
                             &pos,
                             target_opt,
-                            &mut enemy_query,
+                            &enemy_query,
+                            &mut damage_writer,
                         );
                     }
                 }
@@ -273,21 +275,18 @@ pub fn apply_damage_threat(
     add_threat(threat_list, attacker, damage * modifiers.effective_multiplier());
 }
 
-// ── Arc damage ────────────────────────────────────────────────────────────────
+// ── Arc damage emission ──────────────────────────────────────────────────────
 
-/// Applies arc commit damage to the player's selected mob target, provided the
-/// player is facing it within the allowed cone.
-///
-/// Damage = BASE_DAMAGE × commit_quality.  Quality is 0–1 based on how close
-/// the dot was to the nadir at commit time (see `process_arc_commit`).
-fn apply_arc_damage(
+/// Gates an arc commit against range/facing/alive checks and, on pass, emits a
+/// `DamageEvent` for the resolver to apply. Does not touch HP or threat here.
+fn emit_arc_damage(
     quality: f32,
     facing_yaw: f32,
     attacker: Entity,
-    threat_mods: &ThreatModifiers,
     pos: &PlayerPosition,
     target: Option<&PlayerSelectedTarget>,
-    enemy_query: &mut Query<(&EnemyPosition, Option<&mut Health>, Option<&mut ThreatList>), With<EnemyMarker>>,
+    enemy_query: &Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
+    damage_writer: &mut MessageWriter<DamageEvent>,
 ) {
     const BASE_DAMAGE: f32 = 15.0;
     /// Melee reach in world units.
@@ -303,18 +302,15 @@ fn apply_arc_damage(
         }
     };
 
-    let Ok((enemy_pos, health_opt, threat_list_opt)) = enemy_query.get_mut(mob_entity) else {
-        info!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition; \
-               ensure server was restarted after Health was added to spawn_mob");
+    let Ok((enemy_pos, health_opt)) = enemy_query.get(mob_entity) else {
+        info!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition");
         return;
     };
-    let Some(mut health) = health_opt else {
-        info!("[ARC DMG] {mob_entity:?} found but has no Health component — restart the server so mobs spawn with Health");
-        return;
-    };
-    if !health.is_alive() {
-        info!("[ARC DMG] target already dead");
-        return;
+    if let Some(h) = health_opt {
+        if !h.is_alive() {
+            info!("[ARC DMG] target already dead");
+            return;
+        }
     }
 
     // Distance and facing checks in the XZ plane.
@@ -341,12 +337,109 @@ fn apply_arc_damage(
         return;
     }
 
-    let dmg = BASE_DAMAGE * quality;
-    health.current = (health.current - dmg).max(0.0);
-    info!("[ARC DMG] hit! dmg={dmg:.1} quality={quality:.2} dist={dist:.2} dot={dot:.2} hp={:.1}/{:.1}",
-        health.current, health.max);
-    if let Some(mut tl) = threat_list_opt {
-        apply_damage_threat(&mut tl, attacker, dmg, threat_mods);
+    damage_writer.write(DamageEvent::hit(
+        attacker, mob_entity, BASE_DAMAGE, DamageType::Physical, quality,
+    ));
+}
+
+// ── Damage resolution ────────────────────────────────────────────────────────
+
+/// Pure formula. Clamped non-negative.
+/// `final = base × quality × (1 + additive) × multipliers × (1 − resist)`
+fn resolve_damage(ev: &DamageEvent, resist: f32) -> f32 {
+    let raw = ev.base
+        * ev.quality
+        * (1.0 + ev.additive)
+        * ev.multipliers
+        * (1.0 - resist);
+    raw.max(0.0)
+}
+
+/// Consumes every queued `DamageEvent` and applies it: HP subtraction against
+/// the target's `Resistances`, threat credit to the attacker's list using
+/// their `ThreatModifiers`, and a broadcast `DamageNumberMsg` so every client
+/// can pop a floating number over the target.
+pub fn apply_damage_events(
+    mut messages: MessageReader<DamageEvent>,
+    mut target_query: Query<(&mut Health, &Resistances, Option<&mut ThreatList>), With<EnemyMarker>>,
+    threat_mods_query: Query<&ThreatModifiers>,
+    mut number_senders: Query<(&PlayerEntityLink, &mut MessageSender<DamageNumberMsg>)>,
+) {
+    for ev in messages.read() {
+        let Ok((mut health, resist, threat_opt)) = target_query.get_mut(ev.target) else {
+            info!("[DMG] target {:?} missing Health/Resistances (or not an enemy)", ev.target);
+            continue;
+        };
+        if !health.is_alive() { continue; }
+
+        let r = resist.get(ev.ty);
+        let final_dmg = resolve_damage(ev, r);
+        health.current = (health.current - final_dmg).max(0.0);
+
+        info!(
+            "[DMG] {:?}->{:?} ty={:?} base={:.1} q={:.2} +{:.2} x{:.2} resist={:.2} final={:.1} hp={:.1}/{:.1}",
+            ev.attacker, ev.target, ev.ty, ev.base, ev.quality, ev.additive, ev.multipliers,
+            r, final_dmg, health.current, health.max,
+        );
+
+        if let Some(mut tl) = threat_opt {
+            if let Ok(mods) = threat_mods_query.get(ev.attacker) {
+                apply_damage_threat(&mut tl, ev.attacker, final_dmg, mods);
+            }
+        }
+
+        // Floating damage numbers are a personal cue — send only to the
+        // attacker's client. Other players will see the hit through the
+        // forthcoming combat log, not as a world-space popup.
+        let payload = DamageNumberMsg { target: ev.target, amount: final_dmg, ty: ev.ty };
+        for (link, mut sender) in number_senders.iter_mut() {
+            if link.0 == ev.attacker {
+                sender.send::<GameChannel>(payload.clone());
+                break;
+            }
+        }
+    }
+}
+
+// ── Damage over time ─────────────────────────────────────────────────────────
+
+/// One active DoT entry on a target. Fires `remaining_ticks` times at
+/// `interval`-second spacing, each firing a [`DamageEvent`] of `per_tick` base
+/// damage with `ty` and no modifier stack (quality 1.0).
+#[derive(Clone, Debug)]
+pub struct DamageOverTime {
+    pub source: Entity,
+    pub ty: DamageType,
+    pub per_tick: f32,
+    pub interval: f32,
+    pub remaining_ticks: u32,
+    pub since_last: f32,
+}
+
+/// Server-only stack of active DoTs on an entity. Each entry ticks independently.
+#[derive(Component, Default, Debug)]
+pub struct DamageOverTimes(pub Vec<DamageOverTime>);
+
+/// Advances every DoT stack, emitting a [`DamageEvent`] for each entry that
+/// crosses its interval boundary. Removes entries that have fired their last tick.
+pub fn tick_dots(
+    time: Res<Time>,
+    mut targets: Query<(Entity, &mut DamageOverTimes)>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+) {
+    let dt = time.delta_secs();
+    for (target_entity, mut dots) in targets.iter_mut() {
+        dots.0.retain_mut(|dot| {
+            dot.since_last += dt;
+            if dot.since_last >= dot.interval && dot.remaining_ticks > 0 {
+                dot.since_last -= dot.interval;
+                dot.remaining_ticks -= 1;
+                damage_writer.write(DamageEvent::hit(
+                    dot.source, target_entity, dot.per_tick, dot.ty, 1.0,
+                ));
+            }
+            dot.remaining_ticks > 0
+        });
     }
 }
 

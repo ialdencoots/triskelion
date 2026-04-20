@@ -5,6 +5,7 @@ use crate::plugin::AppState;
 use crate::ui::arc::ArcMaterial;
 
 pub mod action_bar;
+pub mod damage_numbers;
 pub mod enemy_bars;
 pub mod frames;
 pub mod group_frame;
@@ -48,6 +49,8 @@ impl Plugin for HudPlugin {
                 frames::update_target_name,
                 frames::update_target_health_fill,
                 enemy_bars::update_enemy_bars,
+                damage_numbers::spawn_damage_numbers,
+                damage_numbers::update_damage_numbers,
                 selection_indicator::update_selection_indicator,
                 group_frame::update_party_rows,
                 group_frame::update_party_row_fade,

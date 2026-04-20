@@ -4,7 +4,7 @@ use lightyear::prelude::server::*;
 
 use shared::settings;
 
-use crate::systems::{combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
+use crate::systems::{combat, connection, dev_dots, enemy, instances::InstanceRegistry, instances, minigame};
 
 pub struct ServerGamePlugin;
 
@@ -26,6 +26,8 @@ impl Plugin for ServerGamePlugin {
         app.add_observer(connection::on_client_disconnected);
 
         // Combat and minigame tick in FixedUpdate for deterministic simulation.
+        // Damage flow: emitters (process_player_inputs, tick_dots) run before
+        // the apply_damage_events resolver so events are drained same-tick.
         app.add_systems(
             FixedUpdate,
             (
@@ -35,7 +37,13 @@ impl Plugin for ServerGamePlugin {
                 connection::process_instance_requests,
                 instances::tick_instance_teardown,
                 enemy::tick_enemy_walk,
-                combat::process_player_inputs,
+                (
+                    combat::process_player_inputs,
+                    // DEV-ONLY — REMOVE: attaches DoTs on 4/5/6 keypresses.
+                    dev_dots::process_dev_dot_requests,
+                    combat::tick_dots,
+                    combat::apply_damage_events,
+                ).chain(),
                 combat::process_target_selections,
                 combat::tick_ability_cooldowns,
                 // Stance multipliers must update before sync so threat display

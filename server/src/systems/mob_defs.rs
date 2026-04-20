@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use lightyear::prelude::Replicate;
 use lightyear::connection::network_target::NetworkTarget;
 
-use shared::components::combat::{Health, ReplicatedThreatList};
+use shared::components::combat::{Health, ReplicatedThreatList, Resistances};
 use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::instances::MobKind;
@@ -33,15 +33,19 @@ struct MobStats {
     aggro_range:  f32,
     melee_range:  f32,
     patrol:       bool,
+    /// Per-type damage reduction in [0.0, 0.75]. Clamped by `Resistances::new`.
+    resist_physical: f32,
+    resist_arcane:   f32,
+    resist_nature:   f32,
 }
 
 fn stats_for_kind(kind: MobKind) -> MobStats {
     match kind {
-        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: 1.1, aggro_range:  8.0, melee_range: 1.5, patrol: true  },
-        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: 1.1, aggro_range: 10.0, melee_range: 1.8, patrol: true  },
-        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: 1.1, aggro_range:  7.0, melee_range: 2.0, patrol: true  },
-        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: 1.1, aggro_range: 12.0, melee_range: 2.0, patrol: false },
-        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: 2.2, aggro_range: 16.0, melee_range: 3.0, patrol: false },
+        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: 1.1, aggro_range:  8.0, melee_range: 1.5, patrol: true,  resist_physical: 0.0, resist_arcane: 0.0, resist_nature: 0.0 },
+        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: 1.1, aggro_range: 10.0, melee_range: 1.8, patrol: true,  resist_physical: 0.2, resist_arcane: 0.0, resist_nature: 0.0 },
+        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: 1.1, aggro_range:  7.0, melee_range: 2.0, patrol: true,  resist_physical: 0.3, resist_arcane: 0.1, resist_nature: 0.0 },
+        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: 1.1, aggro_range: 12.0, melee_range: 2.0, patrol: false, resist_physical: 0.5, resist_arcane: 0.0, resist_nature: 0.3 },
+        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: 2.2, aggro_range: 16.0, melee_range: 3.0, patrol: false, resist_physical: 0.6, resist_arcane: 0.2, resist_nature: 0.4 },
     }
 }
 
@@ -77,6 +81,7 @@ pub fn spawn_mob(
         EnemyPosition::new(x, y, z),
         EnemyVelocity { vx: 0.0, vz: 0.0 },
         Health { current: max_hp, max: max_hp },
+        Resistances::new(stats.resist_physical, stats.resist_arcane, stats.resist_nature),
         behavior,
         ThreatList::default(),
         ReplicatedThreatList::default(),

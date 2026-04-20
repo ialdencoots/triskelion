@@ -34,6 +34,44 @@ impl Default for Health {
     }
 }
 
+/// Kind of damage produced by an action. Mirrors the three playable classes so
+/// damage carries class identity through the formula.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DamageType {
+    Physical,
+    Arcane,
+    Nature,
+}
+
+/// Per-type damage reduction on a target, in [0.0, 0.75]. Replicated so the
+/// client can surface DR in UI. Values are clamped by [`Resistances::new`].
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Resistances {
+    pub physical: f32,
+    pub arcane: f32,
+    pub nature: f32,
+}
+
+impl Resistances {
+    pub const MAX: f32 = 0.75;
+
+    pub fn new(physical: f32, arcane: f32, nature: f32) -> Self {
+        Self {
+            physical: physical.clamp(0.0, Self::MAX),
+            arcane:   arcane.clamp(0.0, Self::MAX),
+            nature:   nature.clamp(0.0, Self::MAX),
+        }
+    }
+
+    pub fn get(&self, ty: DamageType) -> f32 {
+        match ty {
+            DamageType::Physical => self.physical,
+            DamageType::Arcane   => self.arcane,
+            DamageType::Nature   => self.nature,
+        }
+    }
+}
+
 /// Tracks whether this player is currently in combat and which role stance, if
 /// any, is active.  Exiting a stance suspends the minigame and starts `stance_cd`.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
