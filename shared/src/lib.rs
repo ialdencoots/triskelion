@@ -127,7 +127,8 @@ impl Plugin for SharedPlugin {
         app.register_component::<AbilityCooldowns>();
         app.register_component::<ReplicatedThreatList>();
 
-        app.register_component::<PlayerSelectedTarget>();
+        app.register_component::<PlayerSelectedTarget>()
+            .add_map_entities();
 
         // ── Components: instance identity ────────────────────────────────────
         // Not replicate_once — players can transition instances mid-session,

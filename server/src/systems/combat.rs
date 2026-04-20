@@ -82,15 +82,16 @@ pub fn process_player_inputs(
         Option<&mut ArcState>,
         Option<&mut SecondaryArcState>,
         Option<&PlayerSelectedTarget>,
+        &ThreatModifiers,
     ), With<PlayerId>>,
-    mut enemy_query: Query<(&EnemyPosition, Option<&mut Health>), With<EnemyMarker>>,
+    mut enemy_query: Query<(&EnemyPosition, Option<&mut Health>, Option<&mut ThreatList>), With<EnemyMarker>>,
 ) {
     let dt = time.delta_secs();
 
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
+        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt, threat_mods)) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -135,6 +136,8 @@ pub fn process_player_inputs(
                         apply_arc_damage(
                             arc.last_commit_quality,
                             input.facing_yaw,
+                            link.0,
+                            threat_mods,
                             &pos,
                             target_opt,
                             &mut enemy_query,
@@ -150,6 +153,8 @@ pub fn process_player_inputs(
                         apply_arc_damage(
                             secondary.0.last_commit_quality,
                             input.facing_yaw,
+                            link.0,
+                            threat_mods,
                             &pos,
                             target_opt,
                             &mut enemy_query,
@@ -269,9 +274,11 @@ pub fn apply_damage_threat(
 fn apply_arc_damage(
     quality: f32,
     facing_yaw: f32,
+    attacker: Entity,
+    threat_mods: &ThreatModifiers,
     pos: &PlayerPosition,
     target: Option<&PlayerSelectedTarget>,
-    enemy_query: &mut Query<(&EnemyPosition, Option<&mut Health>), With<EnemyMarker>>,
+    enemy_query: &mut Query<(&EnemyPosition, Option<&mut Health>, Option<&mut ThreatList>), With<EnemyMarker>>,
 ) {
     const BASE_DAMAGE: f32 = 15.0;
     /// Melee reach in world units.
@@ -287,7 +294,7 @@ fn apply_arc_damage(
         }
     };
 
-    let Ok((enemy_pos, health_opt)) = enemy_query.get_mut(mob_entity) else {
+    let Ok((enemy_pos, health_opt, threat_list_opt)) = enemy_query.get_mut(mob_entity) else {
         info!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition; \
                ensure server was restarted after Health was added to spawn_mob");
         return;
@@ -329,6 +336,9 @@ fn apply_arc_damage(
     health.current = (health.current - dmg).max(0.0);
     info!("[ARC DMG] hit! dmg={dmg:.1} quality={quality:.2} dist={dist:.2} dot={dot:.2} hp={:.1}/{:.1}",
         health.current, health.max);
+    if let Some(mut tl) = threat_list_opt {
+        apply_damage_threat(&mut tl, attacker, dmg, threat_mods);
+    }
 }
 
 /// Distribute healing threat across all engaged mobs in an instance.

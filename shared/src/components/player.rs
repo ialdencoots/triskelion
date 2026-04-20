@@ -1,3 +1,4 @@
+use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -112,6 +113,14 @@ pub enum SelectedMobOrPlayer {
 /// clients can show target-of-target information.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct PlayerSelectedTarget(pub Option<SelectedMobOrPlayer>);
+
+impl MapEntities for PlayerSelectedTarget {
+    fn map_entities<M: EntityMapper>(&mut self, mapper: &mut M) {
+        if let Some(SelectedMobOrPlayer::Mob(ref mut e)) = self.0 {
+            *e = mapper.get_mapped(*e);
+        }
+    }
+}
 
 // ── Position / Velocity ───────────────────────────────────────────────────────
 
