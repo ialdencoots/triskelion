@@ -4,6 +4,7 @@ use shared::components::combat::Health;
 use shared::components::enemy::EnemyName;
 use shared::components::player::PlayerName;
 
+use crate::ui::theme;
 use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
@@ -49,16 +50,14 @@ pub struct TargetAvatarBg;
 // ── Spawn ────────────────────────────────────────────────────────────────────
 
 pub fn spawn_frames(mut commands: Commands) {
-    // Player frame: left side of screen center, horizontally offset by CHAR_OFFSET + FRAME_W.
     commands.spawn((PlayerFrameRoot, frame_node(-(FRAME_W + CHAR_OFFSET)), Visibility::Inherited))
         .with_children(|p| {
-            spawn_frame_contents(p, Color::srgb(0.25, 0.55, 0.25), "Player", false);
+            spawn_frame_contents(p, theme::AVATAR_SELF, "Player", false);
         });
 
-    // Target frame: right side of screen center, offset by CHAR_OFFSET.
     commands.spawn((TargetFrameRoot, frame_node(CHAR_OFFSET), Visibility::Hidden))
         .with_children(|p| {
-            spawn_frame_contents(p, Color::srgb(0.65, 0.20, 0.20), "", true);
+            spawn_frame_contents(p, theme::AVATAR_ENEMY, "", true);
         });
 }
 
@@ -82,8 +81,6 @@ fn frame_node(margin_left_px: f32) -> impl Bundle {
 }
 
 fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: &str, is_target: bool) {
-    // Avatar square — tagged with TargetAvatarBg on the target frame so the
-    // update system can recolor it to match the selected entity's group-frame avatar.
     let mut avatar_cmd = parent.spawn((
         Node {
             width: Val::Px(AVATAR_SIZE),
@@ -91,19 +88,13 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
             flex_shrink: 0.0,
             ..default()
         },
-        BackgroundColor(accent.with_alpha(0.5)),
-        BorderColor {
-            top:    Color::srgba(0.4, 0.4, 0.5, 0.6),
-            bottom: Color::srgba(0.4, 0.4, 0.5, 0.6),
-            left:   Color::srgba(0.4, 0.4, 0.5, 0.6),
-            right:  Color::srgba(0.4, 0.4, 0.5, 0.6),
-        },
+        BackgroundColor(accent),
+        theme::uniform_border(),
     ));
     if is_target {
         avatar_cmd.insert(TargetAvatarBg);
     }
 
-    // Health bar column
     parent
         .spawn((
             Node {
@@ -112,13 +103,8 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                 row_gap: Val::Px(3.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.85)),
-            BorderColor {
-                top:    Color::srgba(0.4, 0.4, 0.5, 0.6),
-                bottom: Color::srgba(0.4, 0.4, 0.5, 0.6),
-                left:   Color::srgba(0.4, 0.4, 0.5, 0.6),
-                right:  Color::srgba(0.4, 0.4, 0.5, 0.6),
-            },
+            BackgroundColor(theme::PANEL_BG),
+            theme::uniform_border(),
         ))
         .with_children(|col| {
             let mut text_cmd = col.spawn((
@@ -140,7 +126,7 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                     overflow: Overflow::clip(),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.15, 0.05, 0.05, 0.8)),
+                BackgroundColor(theme::HEALTH_BAR_BG),
             ))
             .with_children(|bar| {
                 let mut fill_cmd = bar.spawn((
@@ -150,7 +136,7 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                         height: Val::Percent(100.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.20, 0.72, 0.20)),
+                    BackgroundColor(theme::HEALTH_FILL),
                 ));
                 if is_target {
                     fill_cmd.insert(TargetHealthFill);
@@ -191,14 +177,10 @@ pub fn update_target_avatar(
     if !selected.is_changed() { return; }
     let Ok(mut bg) = avatar_q.single_mut() else { return };
     bg.0 = match selected.0 {
-        None => Color::srgba(0.65, 0.20, 0.20, 0.5),
-        Some(e) if own_entity.as_ref().map(|r| r.0 == e).unwrap_or(false) => {
-            Color::srgb(0.25, 0.55, 0.25).with_alpha(0.5) // self = green
-        }
-        Some(e) if remote_q.contains(e) => {
-            Color::srgb(0.20, 0.40, 0.60).with_alpha(0.5) // party member = blue
-        }
-        _ => Color::srgb(0.65, 0.20, 0.20).with_alpha(0.5), // enemy = red
+        None => theme::AVATAR_ENEMY,
+        Some(e) if own_entity.as_ref().map(|r| r.0 == e).unwrap_or(false) => theme::AVATAR_SELF,
+        Some(e) if remote_q.contains(e) => theme::AVATAR_PARTY,
+        _ => theme::AVATAR_ENEMY,
     };
 }
 

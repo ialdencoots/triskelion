@@ -25,58 +25,30 @@ pub enum MobBehavior {
     Aggro { aggro_range: f32, melee_range: f32 },
 }
 
-fn max_health_for_kind(kind: MobKind) -> f32 {
-    match kind {
-        MobKind::Goblin           =>   80.0,
-        MobKind::Orc              =>  120.0,
-        MobKind::Troll            =>  200.0,
-        MobKind::CrystalGolem     =>  300.0,
-        MobKind::CrystalGolemLord => 1000.0,
-    }
+struct MobStats {
+    name:         &'static str,
+    max_health:   f32,
+    /// Y offset from terrain floor to capsule center (radius + half_cyl + 0.2 gap).
+    floor_offset: f32,
+    aggro_range:  f32,
+    melee_range:  f32,
+    patrol:       bool,
 }
 
-fn default_behavior_for_kind(kind: MobKind, phase: f32) -> MobBehavior {
+fn stats_for_kind(kind: MobKind) -> MobStats {
     match kind {
-        MobKind::Goblin => MobBehavior::Patrol {
-            phase,
-            aggro_range: 8.0,
-            melee_range: 1.5,
-            aggroed: false,
-        },
-        MobKind::Orc => MobBehavior::Patrol {
-            phase,
-            aggro_range: 10.0,
-            melee_range: 1.8,
-            aggroed: false,
-        },
-        MobKind::Troll => MobBehavior::Patrol {
-            phase,
-            aggro_range: 7.0,
-            melee_range: 2.0,
-            aggroed: false,
-        },
-        MobKind::CrystalGolem     => MobBehavior::Aggro { aggro_range: 12.0, melee_range: 2.0 },
-        MobKind::CrystalGolemLord => MobBehavior::Aggro { aggro_range: 16.0, melee_range: 3.0 },
+        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: 1.1, aggro_range:  8.0, melee_range: 1.5, patrol: true  },
+        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: 1.1, aggro_range: 10.0, melee_range: 1.8, patrol: true  },
+        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: 1.1, aggro_range:  7.0, melee_range: 2.0, patrol: true  },
+        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: 1.1, aggro_range: 12.0, melee_range: 2.0, patrol: false },
+        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: 2.2, aggro_range: 16.0, melee_range: 3.0, patrol: false },
     }
 }
 
 /// Y offset from terrain floor to capsule center so the capsule base sits just
 /// above the ground. Formula: radius + half_cylinder_height + 0.2 gap.
 pub fn floor_offset_for_kind(kind: MobKind) -> f32 {
-    match kind {
-        MobKind::CrystalGolemLord => 2.2, // radius 1.0 + half-cyl 1.0 + gap 0.2
-        _                         => 1.1, // radius 0.4 + half-cyl 0.5 + gap 0.2
-    }
-}
-
-pub fn mob_name_for_kind(kind: MobKind) -> &'static str {
-    match kind {
-        MobKind::Goblin           => "Goblin",
-        MobKind::Orc              => "Orc",
-        MobKind::Troll            => "Troll",
-        MobKind::CrystalGolem     => "Crystal Golem",
-        MobKind::CrystalGolemLord => "Crystal Golem Lord",
-    }
+    stats_for_kind(kind).floor_offset
 }
 
 /// Spawn one mob.  `y` is the pre-computed world-space Y (caller already
@@ -90,9 +62,14 @@ pub fn spawn_mob(
     phase: f32,
     instance_id: u32,
 ) -> Entity {
-    let name = mob_name_for_kind(kind);
-    let behavior = default_behavior_for_kind(kind, phase);
-    let max_hp = max_health_for_kind(kind);
+    let stats = stats_for_kind(kind);
+    let name = stats.name;
+    let max_hp = stats.max_health;
+    let behavior = if stats.patrol {
+        MobBehavior::Patrol { phase, aggro_range: stats.aggro_range, melee_range: stats.melee_range, aggroed: false }
+    } else {
+        MobBehavior::Aggro { aggro_range: stats.aggro_range, melee_range: stats.melee_range }
+    };
     let mut entity = commands.spawn((
         Name::new(name),
         EnemyMarker,

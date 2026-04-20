@@ -48,7 +48,7 @@ pub fn update_orbit_camera(
     orbit.distance = (orbit.distance - mouse_scroll.delta.y * 1.5).clamp(0.0, 50.0);
 
     let Ok((player_entity, player_tf)) = player_query.single() else { return };
-    let camera_entity = camera_query.single().unwrap();
+    let Ok(camera_entity) = camera_query.single() else { return };
 
     let rot = Quat::from_euler(EulerRot::YXZ, orbit.yaw, orbit.pitch, 0.0);
     let target = player_tf.translation + Vec3::Y * 1.0;

@@ -30,6 +30,8 @@ pub struct ThreatEntry {
 #[derive(Component, Default, Debug)]
 pub struct ThreatList {
     pub entries: Vec<ThreatEntry>,
+    /// Set whenever entries change; cleared by `sync_replicated_threat_list`.
+    pub dirty: bool,
 }
 
 /// A time-limited additive threat multiplier bonus from any source.
@@ -233,10 +235,12 @@ pub fn apply_stance_multipliers(
 /// translating internal `Entity` keys to `PlayerId` (u64) for clients.
 /// Entries are sorted descending by threat.
 pub fn sync_replicated_threat_list(
-    mut mob_query: Query<(&ThreatList, &mut ReplicatedThreatList)>,
+    mut mob_query: Query<(&mut ThreatList, &mut ReplicatedThreatList)>,
     player_query: Query<(Entity, &PlayerId)>,
 ) {
-    for (threat_list, mut replicated) in mob_query.iter_mut() {
+    for (mut threat_list, mut replicated) in mob_query.iter_mut() {
+        if !threat_list.dirty { continue; }
+        threat_list.dirty = false;
         let mut entries: Vec<(u64, f32)> = threat_list.entries.iter()
             .filter_map(|entry| {
                 player_query.get(entry.player_entity).ok()
@@ -255,6 +259,7 @@ fn add_threat(list: &mut ThreatList, player: Entity, amount: f32) {
     } else {
         list.entries.push(ThreatEntry { player_entity: player, threat: amount });
     }
+    list.dirty = true;
 }
 
 /// Apply threat to a mob from a damage event.

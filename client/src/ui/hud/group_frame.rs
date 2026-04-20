@@ -5,6 +5,7 @@ use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerName};
 
 use crate::plugin::LocalClientId;
+use crate::ui::theme;
 use crate::world::selection::SelectedTarget;
 
 const PANEL_W: f32 = 180.0;
@@ -68,7 +69,7 @@ pub fn spawn_group_frame(mut commands: Commands) {
                 min_width: Val::Px(PANEL_W),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.04, 0.04, 0.06, 0.75)),
+            BackgroundColor(theme::PANEL_BG_DARK),
         ))
         .add_children(&[self_section, others_section]);
 }
@@ -76,11 +77,7 @@ pub fn spawn_group_frame(mut commands: Commands) {
 // ── Row building ──────────────────────────────────────────────────────────────
 
 fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) -> Entity {
-    let avatar_tint = if is_self {
-        Color::srgb(0.25, 0.55, 0.25)
-    } else {
-        Color::srgb(0.20, 0.40, 0.60)
-    };
+    let avatar_tint = if is_self { theme::AVATAR_SELF } else { theme::AVATAR_PARTY };
 
     let fill = commands
         .spawn((
@@ -90,7 +87,7 @@ fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) 
                 height: Val::Percent(100.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.20, 0.72, 0.20)),
+            BackgroundColor(theme::HEALTH_FILL),
         ))
         .id();
 
@@ -102,7 +99,7 @@ fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) 
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.15, 0.05, 0.05, 0.8)),
+            BackgroundColor(theme::HEALTH_BAR_BG),
         ))
         .add_child(fill)
         .id();
@@ -136,13 +133,8 @@ fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) 
                 border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
-            BackgroundColor(avatar_tint.with_alpha(0.5)),
-            BorderColor {
-                top:    Color::srgba(0.4, 0.4, 0.5, 0.5),
-                bottom: Color::srgba(0.4, 0.4, 0.5, 0.5),
-                left:   Color::srgba(0.4, 0.4, 0.5, 0.5),
-                right:  Color::srgba(0.4, 0.4, 0.5, 0.5),
-            },
+            BackgroundColor(avatar_tint),
+            theme::uniform_border(),
         ))
         .id();
 

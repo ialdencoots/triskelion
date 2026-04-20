@@ -1,4 +1,5 @@
 pub mod arc;
+pub mod theme;
 pub mod character_select;
 pub mod bar_fill;
 pub mod dag;

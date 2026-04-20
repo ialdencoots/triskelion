@@ -4,6 +4,7 @@ use shared::components::combat::{Health, ReplicatedThreatList};
 use shared::components::enemy::{EnemyMarker, EnemyName, MobTarget};
 use shared::components::player::{PlayerId, PlayerName, PlayerSelectedTarget, SelectedMobOrPlayer};
 
+use crate::ui::theme;
 use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
@@ -93,7 +94,7 @@ pub fn spawn_target_panel(mut commands: Commands) {
                 display: Display::None,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.85)),
+            BackgroundColor(theme::PANEL_BG),
         ))
         .with_children(|panel| {
             // ── Target-of-target row ──────────────────────────────────────
@@ -126,12 +127,7 @@ pub fn spawn_target_panel(mut commands: Commands) {
                             ..default()
                         },
                         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
-                        BorderColor {
-                            top:    Color::srgba(0.4, 0.4, 0.5, 0.5),
-                            bottom: Color::srgba(0.4, 0.4, 0.5, 0.5),
-                            left:   Color::srgba(0.4, 0.4, 0.5, 0.5),
-                            right:  Color::srgba(0.4, 0.4, 0.5, 0.5),
-                        },
+                        theme::uniform_border(),
                     ));
 
                     // Name + health bar column
@@ -166,7 +162,7 @@ pub fn spawn_target_panel(mut commands: Commands) {
                                     height: Val::Percent(100.0),
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgb(0.20, 0.72, 0.20)),
+                                BackgroundColor(theme::HEALTH_FILL),
                             ));
                         });
                     });
@@ -226,21 +222,17 @@ pub fn spawn_target_panel(mut commands: Commands) {
 
 // ── Compute ───────────────────────────────────────────────────────────────────
 
-const AVATAR_ENEMY:  Color = Color::srgba(0.65, 0.20, 0.20, 0.5);
-const AVATAR_SELF:   Color = Color::srgba(0.25, 0.55, 0.25, 0.5);
-const AVATAR_PARTY:  Color = Color::srgba(0.20, 0.40, 0.60, 0.5);
-
 fn avatar_color_for(
     entity: Entity,
     own: &Option<Res<OwnServerEntity>>,
     remote_q: &Query<(), With<RemotePlayerMarker>>,
 ) -> Color {
     if own.as_ref().map(|r| r.0 == entity).unwrap_or(false) {
-        AVATAR_SELF
+        theme::AVATAR_SELF
     } else if remote_q.contains(entity) {
-        AVATAR_PARTY
+        theme::AVATAR_PARTY
     } else {
-        AVATAR_ENEMY
+        theme::AVATAR_ENEMY
     }
 }
 
@@ -293,7 +285,7 @@ pub fn compute_threat_display(
                         .unwrap_or(100.0);
                     let e = tl_opt.map(|tl| tl.entries.clone()).unwrap_or_default();
                     data.tot_entity = Some(*mob_entity);
-                    (e, Some(TotDisplay { name: mob_name.0.clone(), health_pct: hp, avatar_color: AVATAR_ENEMY }))
+                    (e, Some(TotDisplay { name: mob_name.0.clone(), health_pct: hp, avatar_color: theme::AVATAR_ENEMY }))
                 }
                 Some(SelectedMobOrPlayer::Player(play_id)) => {
                     // ToT is another PC — look up by PlayerId (stable across clients).

@@ -19,6 +19,7 @@ const INITIAL_AGGRO_THREAT: f32 = 1.0;
 fn seed_aggro_threat(threat_list: &mut ThreatList, entity: Entity) {
     if !threat_list.entries.iter().any(|e| e.player_entity == entity) {
         threat_list.entries.push(ThreatEntry { player_entity: entity, threat: INITIAL_AGGRO_THREAT });
+        threat_list.dirty = true;
     }
 }
 
@@ -182,10 +183,12 @@ pub fn tick_enemy_walk(
                     Some((dist, _, _, _)) if *aggroed && dist > leash_range => {
                         *aggroed = false;
                         threat_list.entries.clear();
+                        threat_list.dirty = true;
                     }
                     None => {
                         *aggroed = false;
                         threat_list.entries.clear();
+                        threat_list.dirty = true;
                     }
                     _ => {}
                 }
@@ -259,6 +262,7 @@ pub fn tick_enemy_walk(
                     vel.vx = 0.0;
                     vel.vz = 0.0;
                     threat_list.entries.clear();
+                    threat_list.dirty = true;
                     mob_target.0 = None;
                 }
             }
