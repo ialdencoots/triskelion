@@ -8,7 +8,7 @@ use crate::components::combat::DamageType;
 ///
 /// Formula: `final = base × quality × (1 + additive) × multipliers × (1 − resist[ty])`
 ///
-/// - `additive` is the sum of flat bonuses (DAG modifiers, gear). Default 0.0.
+/// - `additive` is the sum of flat bonuses (cube/grid bonuses, gear). Default 0.0.
 /// - `multipliers` is the product of buff/debuff multipliers. Default 1.0.
 /// - `quality` is the minigame commit quality in [0, 1]. Default 1.0 for
 ///   non-minigame sources (DoT ticks, fixed-damage abilities).

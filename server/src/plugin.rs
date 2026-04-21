@@ -52,7 +52,7 @@ impl Plugin for ServerGamePlugin {
                 combat::sync_replicated_threat_list,
                 minigame::tick_arc_states,
                 minigame::tick_secondary_arc_states,
-                minigame::tick_dag_states,
+                minigame::tick_cube_states,
                 minigame::tick_bar_fill_states,
                 minigame::tick_wave_interference_states,
                 minigame::tick_value_lock_states,

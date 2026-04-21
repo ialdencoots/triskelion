@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use shared::components::minigame::{
     arc::{ArcState, SecondaryArcState},
     bar_fill::BarFillState,
-    dag::DagState,
+    cube::CubeState,
     heartbeat::HeartbeatState,
     value_lock::ValueLockState,
     wave_interference::WaveInterferenceState,
@@ -59,12 +59,14 @@ pub fn tick_secondary_arc_states(time: Res<Time>, mut query: Query<&mut Secondar
     }
 }
 
-/// Advance all active DAG flows by one server tick.
+/// Advance all active cube overlays by one server tick.
 ///
 /// Per tick:
-/// - Advance `flow_progress` by `dt / flow_duration`.
-/// - At terminal node: apply `collected_modifiers` to the triggering action and reset state.
-pub fn tick_dag_states(time: Res<Time>, mut query: Query<&mut DagState>) {}
+/// - If inactive: check arc streak cap; on trigger, seed face bonuses from
+///   skill-tree × aggregate-quality and open the overlay.
+/// - If active: advance `fill_progress`; on timing input, collect bonus, rotate,
+///   decrement `rotations_remaining`. At 0: resolve `collected` and close the overlay.
+pub fn tick_cube_states(time: Res<Time>, mut query: Query<&mut CubeState>) {}
 
 /// Advance all active Bar Fill states by one server tick.
 ///

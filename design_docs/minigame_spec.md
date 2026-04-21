@@ -15,8 +15,8 @@ timing of inputs against that autonomous process.
 
 ### Mechanics
 - **Arc** — continuous performance signal; commit quality tracked as ghost arc history
-- **DAG** — each action activation presents its own DAG; branch choices apply modifiers
-  to that action's output
+- **Cube / Grid** — a bonus-routing overlay triggered by streak milestones. Tank/Healer
+  use a cube (timed rotations); Duelist uses a grid (free directional routing).
 
 ---
 
@@ -79,36 +79,38 @@ prevent visual clutter.
 
 **Streak** is defined as the count of consecutive commits landing in the nadir zone without
 an apex-zone commit intervening. Streak is tracked as an integer and is the primary input
-to DAG path quality (see below). A commit landing in the apex zone resets streak to zero.
-Mid-zone commits neither increment nor reset the streak.
+to the cube / grid activation gate. A commit landing in the apex zone resets streak to
+zero. Mid-zone commits neither increment nor reset the streak. The arc also maintains a
+parallel `recent_commit_qualities` ring buffer, consumed by both the cube (aggregate mean
+→ bonus tier gate) and the grid (per-step bonus magnitude).
 
 ---
 
-### DAG / Grid
+### Cube / Grid
 
-> Full specification: `physical_dag_grid.md`. The summary below reflects the current
-> design. Tank and Healer use the flow DAG; Duelist uses a traversal grid that replaces
-> the arc display on activation.
+> Full specification: `physical_cube_grid.md`. The summary below reflects the current
+> design. Tank and Healer use a cube overlay (timed rotations); Duelist uses a traversal
+> grid that replaces the arc display on activation.
 
-#### Tank / Healer — Flow DAG
+#### Tank / Healer — Cube
 
-Flow advances autonomously from entry node to terminal node. Each action activation
-presents its own DAG with up to 3 branch points. At each branch point, up to 3 paths are
-available. If no input is received before flow passes a branch node, flow auto-routes to
-the default path.
+Reaching the streak cap consumes the streak and opens a cube overlay. The cube's visible
+edges (left, bottom, right; top is reserved for the player character) run a fill animation
+toward a bonus marker at each edge's center. The player inputs on a marker during its
+timing window to collect that bonus and rotate the cube, revealing a fresh face. A fixed
+number of rotations per activation (tuning parameter) resolves the cashout.
 
-**Streak interaction**: streak determines how many of the 3 paths are available at each
-branch point. Low streak (0–2): only the default path. Mid streak (3–6): default plus one
-elevated path. High streak (7+): all 3 paths, including any premium option. Unavailable
-paths are visually present but dimmed.
+The arc is **not suspended** during the cube — tank/healer have a single arc and are
+expected to multitask. Streak rebuilds from zero during the cube, so stronger multitaskers
+reach the next activation sooner.
 
-**Timing bonus**: pressing the branch input later within the junction window (closer to the
-node) applies a higher magnitude multiplier to the modifier delivered by that branch.
-Missing the window auto-routes to the default path with no additional penalty.
+**Bonus tier** on each face is gated by the aggregate quality of the capped streak; skill
+tree choices seed the weighting within each tier. **Bonus magnitude** is determined by
+per-bonus timing precision at collection.
 
 #### Duelist — Traversal Grid
 
-The Duelist does not use the flow DAG. Instead, arc streak accumulates as a step budget.
+The Duelist does not use the cube. Instead, arc streak accumulates as a step budget.
 When streak breaks (apex commit) or hits a configurable cap, the arc display is replaced
 by a rectangular grid overlay. The player routes through the grid directionally, collecting
 bonus nodes, and exits the opposite edge to resolve bonuses. Each step costs one streak
@@ -116,23 +118,26 @@ arc. Dead-ends (no valid moves before exit) result in a blowout: all collected b
 lost, streak consumed with no output. Bonus magnitude per node is derived from the arc
 commit quality history buffer.
 
+Arc play is suspended during the grid, since the Duelist already juggles dual arcs and a
+third concurrent layer is not reasonable.
+
 #### Action gating (all roles)
 Action activation is gated by **attack timing** alone — each action has an internal
-cooldown independent of arc or DAG / grid state. There is no resource cost.
+cooldown independent of arc or cube / grid state. There is no resource cost.
 
 ---
 
 ### Mechanic interaction summary (Physical)
 
-Arc commit quality → streak count → gates DAG branch availability (Tank/Healer) or
-accumulates step budget (Duelist).
-Arc commit quality history → per-step bonus magnitude on Duelist grid traversal.
-Streak break or cap → Duelist grid activates; arc display replaced by grid overlay.
-DAG branch inputs (Tank/Healer) → timing bonus scales modifier value; miss auto-routes.
+Arc commit quality → streak count → gates cube / grid activation.
+Arc commit quality history → aggregate mean drives cube bonus tier; per-step entries drive
+Duelist grid bonus magnitudes.
+Streak cap → Tank/Healer cube opens (arc continues); streak resets.
+Streak break or cap → Duelist grid opens (arc suspends); arc display replaced by grid.
+Cube rotations (Tank/Healer) → per-bonus timing scales magnitude within tier range.
 Grid traversal (Duelist) → bonus nodes collected; dead-end blowout loses all bonuses.
 Disruption → counter-directional arc impulse → degrades commit quality → reduces streak
-→ collapses DAG branch options (Tank/Healer) or reduces bonus magnitudes on next grid run
-(Duelist).
+→ lowers next cube's tier (Tank/Healer) or reduces next grid's bonus magnitudes (Duelist).
 
 ---
 

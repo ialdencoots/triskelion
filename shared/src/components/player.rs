@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::combat::{AbilityCooldowns, CombatState, Health};
 use super::minigame::{
-    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, dag::DagState,
+    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
     heartbeat::HeartbeatState, value_lock::ValueLockState,
     wave_interference::WaveInterferenceState,
 };
@@ -35,7 +35,8 @@ pub struct PlayerSubclass(pub Subclass);
 /// The three playable classes, each with two coupled minigame mechanics.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Class {
-    /// Arc + DAG. Commit quality drives streak; streak gates DAG modifier paths.
+    /// Arc + Cube/Grid. Commit quality drives streak; streak cap triggers a cube
+    /// (Tank/Healer) or grid (Duelist) bonus-routing overlay.
     Physical,
     /// Bar Fill + Wave Interference. Pool fuels wave pressure relief or potential conversion.
     Arcane,
@@ -48,11 +49,11 @@ pub enum Class {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Subclass {
     // Physical ─────────────────────────────────────
-    /// Tank. Iron Stance. DAG skews toward aggro/stun/reflection at high streak.
+    /// Tank. Iron Stance. Cube bonuses skew toward aggro/stun/reflection at high streak quality.
     Bulwark,
-    /// Healer. Flowing Guard. Chi burst heal is streak-gated; forced prevention-first design.
+    /// Healer. Flowing Guard. Chi burst heal is quality-gated; forced prevention-first design.
     Intercessor,
-    /// DPS. Edge Form. High-streak DAG paths unlock DoT stacking and multi-hit modifiers.
+    /// DPS. Edge Form. High-streak grid runs unlock DoT stacking and multi-hit bonuses.
     Duelist,
     // Arcane ───────────────────────────────────────
     /// Tank. Null Field. Destructive interference orientation; wave accumulation = Pressure.
@@ -172,13 +173,13 @@ pub struct PlayerBaseBundle {
     pub transform: Transform,
 }
 
-/// Full bundle for a Physical player (Arc + DAG mechanics).
+/// Full bundle for a Physical player (Arc + Cube/Grid mechanics).
 #[derive(Bundle)]
 pub struct PhysicalPlayerBundle {
     pub base: PlayerBaseBundle,
     pub arc: ArcState,
     pub secondary_arc: SecondaryArcState,
-    pub dag: DagState,
+    pub cube: CubeState,
 }
 
 /// Full bundle for an Arcane player (Bar Fill + Wave Interference mechanics).

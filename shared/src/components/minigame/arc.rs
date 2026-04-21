@@ -42,7 +42,7 @@ pub struct ArcState {
     pub last_commit_theta: f32,
     /// Consecutive commits that landed in the nadir zone without an apex-zone commit.
     /// Resets on an apex-zone commit; mid-zone commits neither increment nor reset.
-    /// Primary input to DAG modifier path availability.
+    /// Primary input to cube/grid activation (streak cap triggers the overlay).
     pub streak: u32,
 }
 

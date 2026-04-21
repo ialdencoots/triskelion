@@ -24,7 +24,7 @@ impl Plugin for SharedPlugin {
             enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
-                arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, dag::DagState,
+                arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
                 heartbeat::HeartbeatState, value_lock::ValueLockState,
                 wave_interference::WaveInterferenceState,
             },
@@ -154,7 +154,7 @@ impl Plugin for SharedPlugin {
         // are maintained locally by the client UI systems.
         app.register_component::<ArcState>();
         app.register_component::<SecondaryArcState>();
-        app.register_component::<DagState>();
+        app.register_component::<CubeState>();
         app.register_component::<BarFillState>();
         app.register_component::<WaveInterferenceState>();
         app.register_component::<ValueLockState>();

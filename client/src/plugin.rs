@@ -75,7 +75,7 @@ impl Plugin for ClientGamePlugin {
             Update,
             (
                 ui::arc::render_arc,
-                ui::dag::render_dag,
+                ui::cube::render_cube,
                 ui::bar_fill::render_bar_fill,
                 ui::wave_interference::render_wave_interference,
                 ui::value_lock::render_value_lock,

@@ -8,7 +8,7 @@ use shared::channels::GameChannel;
 use shared::components::combat::{AbilityCooldowns, CombatState, Health};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::{
-    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, dag::DagState, heartbeat::HeartbeatState,
+    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState, heartbeat::HeartbeatState,
     value_lock::ValueLockState, wave_interference::WaveInterferenceState,
 };
 use shared::components::player::{
@@ -154,7 +154,7 @@ pub fn process_spawn_requests(
 
             match &req.class {
                 Class::Physical => {
-                    commands.entity(player_entity).insert((ArcState::default(), SecondaryArcState::default(), DagState::default()));
+                    commands.entity(player_entity).insert((ArcState::default(), SecondaryArcState::default(), CubeState::default()));
                 }
                 Class::Arcane => {
                     commands.entity(player_entity).insert((BarFillState::default(), WaveInterferenceState::default()));

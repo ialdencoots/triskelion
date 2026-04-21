@@ -47,7 +47,7 @@ pub struct ThreatBonus {
 
 /// Server-side per-player threat generation modifiers.  Never replicated.
 /// `role_multiplier` is derived from the active stance each tick.
-/// `bonuses` holds stacking temporary bonuses from any source (DAG, skills, etc.)
+/// `bonuses` holds stacking temporary bonuses from any source (cube/grid, skills, etc.)
 #[derive(Component, Debug)]
 pub struct ThreatModifiers {
     pub role_multiplier: f32,

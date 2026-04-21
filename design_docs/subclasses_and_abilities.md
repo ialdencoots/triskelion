@@ -15,12 +15,12 @@ and **interrupt** as universal combat tools.
 
 ## Class: Physical
 
-**Minigame mechanics**: Arc (continuous performance signal) + DAG or Grid (modifier
-routing, role-dependent). Arc commit quality drives streak. Tank and Healer use a flow DAG
-where streak gates branch availability at timed junctions. The Duelist uses a traversal
-grid: streak accumulates as a step budget and auto-activates the grid on break or cap.
-Disruption applies a counter-directional impulse to the arc dot, degrading coherence and
-streak.
+**Minigame mechanics**: Arc (continuous performance signal) + Cube or Grid (bonus
+routing, role-dependent). Arc commit quality drives streak. Tank and Healer use a cube
+overlay triggered on streak cap, where timed rotations collect bonuses from tier-gated
+faces. The Duelist uses a traversal grid: streak accumulates as a step budget and
+auto-activates the grid on break or cap. Disruption applies a counter-directional impulse
+to the arc dot, degrading coherence and streak.
 
 ---
 
@@ -32,10 +32,10 @@ arc. The ghost arc history reads as a ledger of absorbed punishment: the straigh
 column despite disruption, the deeper the discipline.
 
 **Stance: Iron Stance**
-Aggro generation and damage mitigation mode. DAG branch options skew toward stun-on-hit,
-aggro amplification, and cooldown reduction. At high streak, the damage reflection modifier
-unlocks — absorbed force is converted directly into output, meaning sustained disruption
-becomes a two-way exchange.
+Aggro generation and damage mitigation mode. Cube face bonuses skew toward stun-on-hit,
+aggro amplification, and cooldown reduction. At high streak quality the damage reflection
+modifier unlocks at premium tier — absorbed force is converted directly into output,
+meaning sustained clean play makes disruption a two-way exchange.
 
 ---
 
@@ -47,16 +47,17 @@ but gated behind sustained discipline. The ghost arc history is a record of main
 vigilance — a straight nadir column represents unbroken coverage.
 
 **Stance: Flowing Guard**
-Interception and chi management mode. DAG branch structure is organized around threat
+Interception and chi management mode. Cube face bonuses are organized around threat
 response rather than personal output:
 
-- **Low streak (0–2)** branches: partial deflection (split mitigation between Intercessor
+- **Low streak quality** faces: partial deflection (split mitigation between Intercessor
   and ward), minor stun-on-hit to interrupt follow-up attacks.
-- **High streak (3+)** branches: full nullification (cancel an incoming attack entirely),
-  chi burst heal (direct restoration delivered to the ward — the only healing in the kit),
-  residual chi pulse (minor area mitigation on nearby allies post-deflection).
+- **High streak quality** faces: full nullification (cancel an incoming attack entirely),
+  chi burst heal (direct restoration delivered to the ward — the only healing in the kit,
+  delivered as a held charge rather than an immediate resolution), residual chi pulse
+  (minor area mitigation on nearby allies post-deflection).
 
-The chi burst heal being streak-gated is the defining constraint of the subclass. It is a
+The chi burst heal being quality-gated is the defining constraint of the subclass. It is a
 reward for sustained discipline, not an emergency button. An Intercessor who has lost streak
 under disruption cannot heal on demand — they must restore chi coherence first, which
 reframes the role: prevent damage first, restore only when performing well enough that it is
@@ -86,7 +87,7 @@ in a large, high-quality run. Bonus type distribution is shaped by skill tree ch
 
 | Ability | Type | Description |
 |---|---|---|
-| Iron Stance / Flowing Guard / Edge Form | Stance | Role output mode; activates Arc + DAG minigame (Tank/Healer) or Arc + Grid (Duelist) |
+| Iron Stance / Flowing Guard / Edge Form | Stance | Role output mode; activates Arc + Cube (Tank/Healer) or Arc + Grid (Duelist) |
 | **Lunge** | Mobility | Committed directional burst. Linear, self-propelled, with brief projectile invulnerability mid-travel. Aggressive repositioning — closes distance or crosses gaps. No intangibility on arrival; you are responsible for landing position. |
 | **Stun** | CC | Removes enemy agency entirely for a short duration. No movement, no action. |
 | Taunt | Utility | Forces enemy aggro onto caster for a duration. The Intercessor variant is targeted — aggro is redirected from a specified ally onto a specified target (typically the tank) rather than unconditionally onto the caster. |

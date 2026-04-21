@@ -31,6 +31,7 @@ triskelion/
 ├── client/     # Renderer, UI, input, physics prediction
 └── design_docs/
     ├── minigame_spec.md
+    ├── physical_cube_grid.md
     └── subclasses_and_abilities.md
 ```
 
@@ -38,11 +39,13 @@ triskelion/
 
 Each class has two coupled minigames. The server runs all minigame simulations at 64 Hz and replicates state to clients; the client renders overlay UI from replicated state.
 
-### Physical — Arc + DAG
+### Physical — Arc + Cube / Grid
 
 **Arc:** A dot oscillates sinusoidally along a semicircular track, moving fastest at the center and slowest at the edges. The player commits when the dot reaches a desired position; proximity to center determines commit quality (0–1). Incoming hits apply counter-directional impulse, creating irregular oscillations.
 
-**DAG:** Each action presents a directed graph with 1–3 branch points. Flow advances autonomously; the player selects branches by timing inputs within a window. Later inputs score higher multipliers. Available paths depend on current streak quality.
+**Cube (Tank/Healer):** When arc streak reaches a cap, a cube overlay opens alongside the arc. Its three interactive edges each fill toward a bonus marker; timing an input on a marker collects that bonus and rotates the cube to a fresh face. Aggregate streak quality gates bonus tier; per-bonus timing precision determines magnitude. Arc play continues — multitasking during the cube accelerates the next activation.
+
+**Grid (Duelist):** When arc streak caps or breaks, the arc display is replaced by a rectangular grid. The player routes through directionally, collecting bonus nodes, and exits the opposite edge. Dead-ends blow out, losing all collected bonuses. Per-node magnitude comes from arc commit quality history.
 
 | Subclass | Role | Focus |
 |---|---|---|
