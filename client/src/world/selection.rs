@@ -9,7 +9,7 @@ use shared::components::enemy::EnemyMarker;
 
 /// A left-click is a "tap" (select) only if total mouse movement while held
 /// stays below this pixel threshold.
-const DRAG_THRESHOLD: f32 = 4.0;
+const DRAG_THRESHOLD: f32 = 8.0;
 
 #[derive(Resource, Default)]
 pub struct SelectedTarget(pub Option<Entity>);
@@ -40,6 +40,11 @@ pub fn track_left_drag(
     }
 }
 
+/// Radius of the sphere used as a fallback pick when the precise raycast misses.
+/// Gives a bit of click forgiveness in world space — close enemies gain the most
+/// screen-space leniency, distant ones still require a reasonably accurate click.
+const PICK_SPHERE_RADIUS: f32 = 0.5;
+
 pub fn select_on_click(
     buttons: Res<ButtonInput<MouseButton>>,
     state: Res<LeftClickState>,
@@ -64,17 +69,42 @@ pub fn select_on_click(
     let Ok((camera, cam_tf)) = camera_query.single() else { return };
     let Ok(ray) = camera.viewport_to_world(cam_tf, cursor_pos) else { return };
 
-    let hit = spatial_query.cast_ray(
+    let is_target = |e: Entity| enemy_query.contains(e) || remote_player_query.contains(e);
+    let filter = SpatialQueryFilter::default();
+
+    // Precise raycast first — pinpoint clicks respect what's literally under the cursor,
+    // including terrain occlusion (ray hits terrain → selection clears).
+    let ray_hit = spatial_query.cast_ray(
         ray.origin,
         ray.direction,
         2000.0,
         true,
-        &SpatialQueryFilter::default(),
+        &filter,
     );
 
-    selected.0 = hit
-        .filter(|h| enemy_query.contains(h.entity) || remote_player_query.contains(h.entity))
-        .map(|h| h.entity);
+    if let Some(h) = ray_hit {
+        if is_target(h.entity) {
+            selected.0 = Some(h.entity);
+            return;
+        }
+    }
+
+    // Forgiving fallback: sphere-cast along the ray, skipping non-target entities.
+    // Runs whenever the precise ray didn't land on a target (terrain hit, sky, etc.),
+    // so near-misses grab the nearest enemy within the swept volume.
+    let shape = Collider::sphere(PICK_SPHERE_RADIUS);
+    let config = ShapeCastConfig::from_max_distance(2000.0);
+    let hit = spatial_query.cast_shape_predicate(
+        &shape,
+        ray.origin,
+        Quat::IDENTITY,
+        ray.direction,
+        &config,
+        &filter,
+        &is_target,
+    );
+
+    selected.0 = hit.map(|h| h.entity);
 }
 
 /// Tab key cycles through nearby enemies, sorted nearest-first.

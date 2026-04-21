@@ -169,53 +169,53 @@ pub fn tick_enemy_walk(
     for (mut pos, mut vel, mut behavior, iid, mut threat_list, mut mob_target) in mob_query.iter_mut() {
         match &mut *behavior {
             MobBehavior::Patrol { phase, aggro_range, melee_range, aggroed } => {
-                // Find nearest player for aggro trigger (still proximity-based).
                 let nearest = find_nearest_player_in_instance(&player_query, iid.0, &pos, f32::INFINITY);
-
-                // Aggro/de-aggro with hysteresis: break at 1.5× the aggro range
-                // so mobs don't flicker when the player sits on the threshold.
                 let leash_range = *aggro_range * 1.5;
-                match nearest {
-                    Some((dist, _, _, entity)) if !*aggroed && dist <= *aggro_range => {
+                let has_threat = !threat_list.entries.is_empty();
+
+                if !*aggroed {
+                    // Aggro from proximity or from any damage received.
+                    if has_threat {
                         *aggroed = true;
-                        seed_aggro_threat(&mut threat_list, entity);
+                    } else if let Some((dist, _, _, entity)) = nearest {
+                        if dist <= *aggro_range {
+                            *aggroed = true;
+                            seed_aggro_threat(&mut threat_list, entity);
+                        }
                     }
-                    Some((dist, _, _, _)) if *aggroed && dist > leash_range => {
-                        *aggroed = false;
-                        threat_list.entries.clear();
-                        threat_list.dirty = true;
-                    }
-                    None => {
-                        *aggroed = false;
-                        threat_list.entries.clear();
-                        threat_list.dirty = true;
-                    }
-                    _ => {}
                 }
 
                 if *aggroed {
                     let sep = compute_separation_force(Vec2::new(pos.x, pos.z), &mob_positions, iid.0);
 
-                    // Chase highest-threat player; fall back to nearest.
-                    let target = select_threat_target(&threat_list, iid.0, &pos, leash_range, &player_query)
-                        .or(nearest);
+                    // Damage-aggroed mobs chase with no distance cap so a player
+                    // who DoT'd from range can't trivially walk away. Proximity-
+                    // only aggro (empty threat list) uses the normal leash range.
+                    let chase_leash = if has_threat { f32::INFINITY } else { leash_range };
+                    let target = select_threat_target(&threat_list, iid.0, &pos, chase_leash, &player_query)
+                        .or_else(|| nearest.filter(|(d, ..)| *d <= leash_range));
 
-                    mob_target.0 = target.and_then(|(_, _, _, e)| {
-                        player_query.get(e).ok().map(|(_, pid, _, _, _)| pid.0)
-                    });
-
-                    if let Some((dist, dx, dz, _)) = target {
-                        if dist > *melee_range {
-                            let chase = Vec2::new(dx, dz).normalize_or_zero();
-                            let dir = (chase + sep).normalize_or_zero();
-                            vel.vx = dir.x * SPEED;
-                            vel.vz = dir.y * SPEED;
-                        } else {
-                            melee_spread(&mut vel, sep, Vec2::new(dx, dz));
-                        }
+                    if target.is_none() {
+                        // No reachable target — reset to patrol.
+                        *aggroed = false;
+                        threat_list.entries.clear();
+                        threat_list.dirty = true;
+                        mob_target.0 = None;
                     } else {
-                        vel.vx = 0.0;
-                        vel.vz = 0.0;
+                        mob_target.0 = target.and_then(|(_, _, _, e)| {
+                            player_query.get(e).ok().map(|(_, pid, _, _, _)| pid.0)
+                        });
+
+                        if let Some((dist, dx, dz, _)) = target {
+                            if dist > *melee_range {
+                                let chase = Vec2::new(dx, dz).normalize_or_zero();
+                                let dir = (chase + sep).normalize_or_zero();
+                                vel.vx = dir.x * SPEED;
+                                vel.vz = dir.y * SPEED;
+                            } else {
+                                melee_spread(&mut vel, sep, Vec2::new(dx, dz));
+                            }
+                        }
                     }
                 } else {
                     mob_target.0 = None;
@@ -240,8 +240,10 @@ pub fn tick_enemy_walk(
                     }
                 }
 
-                // Chase highest-threat player; fall back to nearest in range.
-                let target = select_threat_target(&threat_list, iid.0, &pos, *aggro_range, &player_query)
+                // Chase highest-threat player with no distance cap (damage aggros
+                // from any range); fall back to nearest in range for proximity aggro.
+                let threat_leash = if threat_list.entries.is_empty() { *aggro_range } else { f32::INFINITY };
+                let target = select_threat_target(&threat_list, iid.0, &pos, threat_leash, &player_query)
                     .or(nearest_in_range);
 
                 mob_target.0 = target.and_then(|(_, _, _, e)| {

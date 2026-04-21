@@ -432,9 +432,19 @@ pub fn apply_damage_events(
             r, final_dmg, health.current, health.max,
         );
 
-        if let Some(mut tl) = threat_opt {
-            if let Ok(mods) = threat_mods_query.get(ev.attacker) {
-                apply_damage_threat(&mut tl, ev.attacker, final_dmg, mods);
+        match threat_opt {
+            None => {
+                warn!("[DMG] target {:?} has no ThreatList — skipping threat", ev.target);
+            }
+            Some(mut tl) => {
+                match threat_mods_query.get(ev.attacker) {
+                    Err(_) => {
+                        warn!("[DMG] attacker {:?} has no ThreatModifiers — skipping threat", ev.attacker);
+                    }
+                    Ok(mods) => {
+                        apply_damage_threat(&mut tl, ev.attacker, final_dmg, mods);
+                    }
+                }
             }
         }
 
