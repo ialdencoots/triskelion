@@ -5,5 +5,6 @@ pub mod bar_fill;
 pub mod cube;
 pub mod heartbeat;
 pub mod hud;
+pub mod streak;
 pub mod value_lock;
 pub mod wave_interference;

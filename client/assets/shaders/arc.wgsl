@@ -138,16 +138,27 @@ fn sine_arc_layer(
             let t_bev = saturate((rpy - (arc_y - TRACK_W)) / (TRACK_W * 2.0));
             var bev   = mix(1.65, 0.52, t_bev);
 
-            // Commit ripple on the main arc only.
+            // Commit ripple on the main arc only. `extra.y` encodes the commit's
+            // zone class: +1 = nadir (streak-add, tint green), -1 = apex (break,
+            // tint red), 0 = mid (no tint). The ripple passes along the rail and
+            // carries this signal so the player can tell streak hits at a glance.
+            var tinted_zc = zc;
             if is_main && commit_pulse > 0.001 {
                 let commit_dist  = abs(physical_theta - commit_theta) / PI;
                 let ripple_front = 1.0 - commit_pulse;
                 let ripple       = max(0.0, 1.0 - abs(commit_dist - ripple_front) * 9.0)
                                    * commit_pulse;
                 bev *= 1.0 + ripple * 0.9;
+
+                let tint = params.extra.y;
+                if tint > 0.0 {
+                    tinted_zc = mix(zc, vec3<f32>(0.25, 1.15, 0.38), ripple * tint * 0.85);
+                } else if tint < 0.0 {
+                    tinted_zc = mix(zc, vec3<f32>(1.20, 0.18, 0.08), ripple * (-tint) * 0.85);
+                }
             }
 
-            let col  = clamp(zc * bev, vec3<f32>(0.0), vec3<f32>(2.0));
+            let col  = clamp(tinted_zc * bev, vec3<f32>(0.0), vec3<f32>(2.0));
             let glow = (1.0 - smoothstep(TRACK_W + 0.5, TRACK_W + 6.0, perp_dist)) * 0.14;
             out = vec4<f32>(col, rail_w * 0.97 + glow);
         }

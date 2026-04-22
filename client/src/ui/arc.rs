@@ -65,6 +65,11 @@ const GHOST_PULSE_DECAY: f32 = 2.0;
 const ARC_DEPTH_RATIO: f32 = 0.310;
 /// Arc half-width as a fraction of node width — mirrors the shader's `HALF_W` ratio.
 const ARC_HALF_W_RATIO: f32 = 0.452;
+/// Fixed pixel height of the primary/secondary arc material nodes. Sized to fit
+/// the tilted DPS arc (which, at 50% panel width, extends ~165 px from the node
+/// top in local coords) plus the dot glow. The nodes are bottom-anchored inside
+/// `MinigameRoot` so the arcs render against the bottom of the minigame panel.
+pub const ARC_NODE_HEIGHT_PX: f32 = 190.0;
 /// Horizontal distance from a side arc's center to the central node's center,
 /// as a fraction of the central node width. Drives ghost[0] fly-in animation.
 const SIDE_ARC_CX_OFFSET_RATIO: f32 = 0.24;
@@ -83,6 +88,9 @@ pub struct GhostArcHistory {
     pub commit_theta: f32,
     /// Decays from 1.0 → 0.0 after a commit; drives arc pulse and dot color.
     pub commit_pulse: f32,
+    /// Classification of the last commit for ripple tint: +1 streak-add (nadir),
+    /// 0 neutral (mid), -1 break (apex). Passed to the shader via `extra.y`.
+    pub last_commit_tint: f32,
 }
 
 impl Default for GhostArcHistory {
@@ -93,6 +101,7 @@ impl Default for GhostArcHistory {
             prev_stance: None,
             commit_theta: std::f32::consts::FRAC_PI_2,
             commit_pulse: 0.0,
+            last_commit_tint: 0.0,
         }
     }
 }
@@ -128,6 +137,9 @@ pub struct CentralGhostHistory {
     /// Remaining scroll displacement (in STACK_OFFSET units) carried over from an
     /// animation that was interrupted by a new commit. Prevents teleporting.
     pub scroll_carry: f32,
+    /// Classification of the last commit for ripple tint on the central-ghost
+    /// fly-in: +1 streak-add, 0 neutral, -1 break. See `GhostArcHistory::last_commit_tint`.
+    pub last_commit_tint: f32,
 }
 
 impl Default for CentralGhostHistory {
@@ -138,6 +150,7 @@ impl Default for CentralGhostHistory {
             commit_pulse: 0.0,
             last_commit_tilt: 0.0,
             scroll_carry: 0.0,
+            last_commit_tint: 0.0,
         }
     }
 }
@@ -170,22 +183,25 @@ pub fn spawn_arc_overlay(
     let central_mat = materials.add(ArcMaterial::default());
 
     commands.entity(root).with_children(|parent| {
-        // Primary arc — full width by default; shrinks to half in DPS stance.
+        // Primary arc — bottom-anchored so the curve renders against the bottom
+        // of the minigame panel. Width/left are rewritten per stance each frame.
         parent.spawn((
             PrimaryArcNode,
             MaterialNode(primary_mat),
             Node {
                 width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
+                height: Val::Px(ARC_NODE_HEIGHT_PX),
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
-                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
                 ..default()
             },
             Visibility::Hidden,
         ));
 
-        // Secondary arc — left half, only visible in DPS stance.
+        // Secondary arc — left half, only visible in DPS stance. Top-anchored
+        // full height to sit above the central ghost stack (same layout as
+        // the primary arc when in DPS).
         parent.spawn((
             SecondaryArcNode,
             MaterialNode(secondary_mat),
@@ -201,7 +217,10 @@ pub fn spawn_arc_overlay(
         ));
 
         // Central ghost stack — centered, DPS only. Renders unified commit history
-        // from both arcs as horizontal ghost arcs; the live arc is hidden.
+        // from both arcs as horizontal ghost arcs; the live arc is hidden. Kept
+        // at full panel height so the ghost stack has room to cascade downward;
+        // the live arcs at the bottom and the ghost stack occupy different
+        // vertical bands in DPS stance.
         parent.spawn((
             CentralGhostNode,
             MaterialNode(central_mat),
@@ -220,6 +239,20 @@ pub fn spawn_arc_overlay(
 
 // ── Ghost history helpers ─────────────────────────────────────────────────────
 
+/// Classifies a commit by zone using the same proximity formula the server uses
+/// in `process_arc_commit`. Returns +1 (nadir / streak-add), 0 (mid / neutral),
+/// or -1 (apex / break) — the value the shader reads via `ArcParams.extra.y`.
+fn classify_commit(commit_theta: f32, amplitude: f32) -> f32 {
+    let proximity = (commit_theta - std::f32::consts::FRAC_PI_2).abs() / amplitude.max(0.0001);
+    if proximity < 0.2 {
+        1.0
+    } else if proximity > 0.8 {
+        -1.0
+    } else {
+        0.0
+    }
+}
+
 /// Detects a lockout rising edge, records the commit in `ghost` (and optionally
 /// the central history), then decays the commit pulse.
 ///
@@ -229,6 +262,7 @@ fn tick_ghost_history(
     ghost: &mut GhostArcHistory,
     in_lockout: bool,
     commit_theta: f32,
+    amplitude: f32,
     push_to_ghost_trail: bool,
     ghost_max: usize,
     central: Option<&mut CentralGhostHistory>,
@@ -236,12 +270,14 @@ fn tick_ghost_history(
     dt: f32,
 ) {
     if !ghost.prev_in_lockout && in_lockout {
+        let tint = classify_commit(commit_theta, amplitude);
         if push_to_ghost_trail {
             ghost.entries.insert(0, commit_theta);
             ghost.entries.truncate(ghost_max);
         }
         ghost.commit_theta = commit_theta;
         ghost.commit_pulse = 1.0;
+        ghost.last_commit_tint = tint;
         if let Some(c) = central {
             let old_scroll_t = (c.commit_pulse * 2.0 - 1.0).clamp(0.0, 1.0);
             c.scroll_carry = old_scroll_t * (1.0 + c.scroll_carry);
@@ -249,6 +285,7 @@ fn tick_ghost_history(
             c.entries.truncate(MAX_CENTRAL_GHOST_ENTRIES);
             c.commit_pulse = 1.0;
             c.last_commit_tilt = tilt;
+            c.last_commit_tint = tint;
         }
     }
     ghost.prev_in_lockout = in_lockout;
@@ -337,6 +374,7 @@ pub fn render_arc(
             &mut ghost,
             arc.in_lockout,
             arc.last_commit_theta,
+            arc.amplitude,
             true,
             MAX_GHOST_ENTRIES,
             central_opt.as_deref_mut(),
@@ -351,6 +389,20 @@ pub fn render_arc(
             // DPS: primary (right) at left=37%; secondary lives at left=13%.
             node.width = Val::Percent(50.0);
             node.left  = if in_dps { Val::Percent(37.0) } else { Val::Percent(25.0) };
+            // Vertical anchor flips by stance:
+            //   Tank/Heal: bottom-anchored so the arc sits inside the bottom-
+            //              aligned cube (cube renders the rotation gradient above).
+            //   DPS:       top-anchored full-height so the tilted arcs sit above
+            //              the central ghost stack (which occupies the middle).
+            if in_dps {
+                node.top = Val::Px(0.0);
+                node.bottom = Val::Auto;
+                node.height = Val::Percent(100.0);
+            } else {
+                node.top = Val::Auto;
+                node.bottom = Val::Px(0.0);
+                node.height = Val::Px(ARC_NODE_HEIGHT_PX);
+            }
 
             if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                 let size = computed.size();
@@ -360,6 +412,7 @@ pub fn render_arc(
                     sparse = GhostArcHistory {
                         commit_pulse: ghost.commit_pulse,
                         commit_theta: ghost.commit_theta,
+                        last_commit_tint: ghost.last_commit_tint,
                         ..GhostArcHistory::default()
                     };
                     &sparse
@@ -391,6 +444,7 @@ pub fn render_arc(
                             &mut sec_ghost.0,
                             secondary.0.in_lockout,
                             secondary.0.last_commit_theta,
+                            secondary.0.amplitude,
                             false,
                             MAX_GHOST_ENTRIES,
                             central_opt.as_deref_mut(),
@@ -406,9 +460,12 @@ pub fn render_arc(
                         let commit_theta = sec_ghost_opt
                             .as_ref()
                             .map_or(std::f32::consts::FRAC_PI_2, |sg| sg.0.commit_theta);
+                        let last_commit_tint =
+                            sec_ghost_opt.as_ref().map_or(0.0, |sg| sg.0.last_commit_tint);
                         let sec_sparse = GhostArcHistory {
                             commit_pulse,
                             commit_theta,
+                            last_commit_tint,
                             ..GhostArcHistory::default()
                         };
                         mat.params =
@@ -439,12 +496,14 @@ pub fn render_arc(
                         central_opt.as_ref().map_or(0.0, |c| c.last_commit_tilt);
                     let scroll_carry =
                         central_opt.as_ref().map_or(0.0, |c| c.scroll_carry);
+                    let last_commit_tint =
+                        central_opt.as_ref().map_or(0.0, |c| c.last_commit_tint);
                     let (ghost_y_offset, source_cx_offset) =
                         compute_central_ghost_layout(size.x, last_commit_tilt);
                     mat.params = central_ghost_params(
                         entries, arc.amplitude, size.x, size.y, t,
                         ghost_y_offset, commit_pulse, last_commit_tilt,
-                        source_cx_offset, scroll_carry,
+                        source_cx_offset, scroll_carry, last_commit_tint,
                     );
                 }
             } else {
@@ -479,6 +538,7 @@ fn central_ghost_params(
     last_commit_tilt: f32,
     source_cx_offset: f32,
     scroll_carry: f32,
+    last_commit_tint: f32,
 ) -> ArcParams {
     let ghost_count = entries.len().min(MAX_CENTRAL_GHOST_ENTRIES) as f32;
     let g = |i: usize| entries.get(i).copied().unwrap_or(0.0);
@@ -491,7 +551,8 @@ fn central_ghost_params(
         // x=commit_pulse, y=source tilt, z=hide_main, w=ghost_y_offset
         commit: Vec4::new(commit_pulse, last_commit_tilt, 1.0, ghost_y_offset),
         // x=scroll_carry: unfinished scroll from interrupted animation
-        extra: Vec4::new(scroll_carry, 0.0, 0.0, 0.0),
+        // y=commit tint (+1 nadir / 0 mid / -1 apex): drives ripple color bias
+        extra: Vec4::new(scroll_carry, last_commit_tint, 0.0, 0.0),
     }
 }
 
@@ -509,6 +570,7 @@ fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32
         ghost_b: Vec4::new(g(4), g(5), g(6), g(7)),
         dimensions: Vec4::new(w, h, t, tilt),
         commit: Vec4::new(ghost.commit_pulse, ghost.commit_theta, 0.0, 0.0),
-        extra: Vec4::ZERO,
+        // y=commit tint (+1 nadir / 0 mid / -1 apex): drives ripple color bias
+        extra: Vec4::new(0.0, ghost.last_commit_tint, 0.0, 0.0),
     }
 }

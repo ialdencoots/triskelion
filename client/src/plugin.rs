@@ -76,6 +76,8 @@ impl Plugin for ClientGamePlugin {
             (
                 ui::arc::render_arc,
                 ui::cube::render_cube,
+                ui::streak::render_streak_counters,
+                ui::streak::render_streak_fragments,
                 ui::bar_fill::render_bar_fill,
                 ui::wave_interference::render_wave_interference,
                 ui::value_lock::render_value_lock,

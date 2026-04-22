@@ -24,12 +24,22 @@ fn tick_arc(arc: &mut ArcState, dt: f32) {
     arc.phase += arc.disruption_velocity * dt;
     arc.time += dt;
     arc.theta = FRAC_PI_2 + arc.amplitude * (arc.omega * arc.time + arc.phase).sin();
-    if arc.in_lockout {
-        let apex_proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
-        if apex_proximity >= 0.9 {
-            arc.in_lockout = false;
+
+    // Apex-zone rising-edge detection drives two behaviors:
+    //   1. Release lockout once the dot reaches the opposite apex after a commit.
+    //   2. Break the streak after two consecutive apex visits with no commit
+    //      (≈ one full oscillation of idleness).
+    let apex_proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
+    let at_apex = apex_proximity >= 0.9;
+    if at_apex && !arc.prev_at_apex {
+        arc.in_lockout = false;
+        arc.apex_visits_since_commit = arc.apex_visits_since_commit.saturating_add(1);
+        if arc.apex_visits_since_commit >= 2 && arc.streak > 0 {
+            arc.streak = 0;
+            arc.streak_at_last_activation = 0;
         }
     }
+    arc.prev_at_apex = at_apex;
 }
 
 /// Evaluate a commit attempt on an arc. No-ops if in lockout.
@@ -54,7 +64,13 @@ pub fn process_arc_commit(arc: &mut ArcState) {
         arc.streak += 1;
     } else if proximity > 0.8 {
         arc.streak = 0;
+        // The baseline from which the next activation delta is measured travels
+        // with the streak — clear it so a fresh streak activates at the cap again.
+        arc.streak_at_last_activation = 0;
     }
+    // Any commit (any zone) resets the idle-break counter — the streak only
+    // breaks from apex visits that pass with no commit at all.
+    arc.apex_visits_since_commit = 0;
     arc.in_lockout = true;
 }
 
@@ -146,8 +162,10 @@ pub fn activate_cube(cube: &mut CubeState, arc: &mut ArcState) {
     cube.rotation_progress = 0.0;
     cube.rotation_hold_remaining = 0.0;
     cube.new_face_pending = false;
-    // Consume the streak that triggered the cube; arc play rebuilds from zero.
-    arc.streak = 0;
+    // Streak is NOT reset — it's a running consistency counter that survives cube
+    // activation. Record the level at which this activation fired so the next one
+    // triggers another CUBE_CRITICAL_MASS_CAP nadir commits later.
+    arc.streak_at_last_activation = arc.streak;
 }
 
 /// Try to collect the bonus on `edge` of the current face. Returns true on
@@ -196,6 +214,14 @@ fn resolve_cube(cube: &mut CubeState) {
     // `collected` is left populated for the resolution system to drain.
 }
 
+/// Discard an active cube and any bonuses collected so far. Used when the
+/// player leaves the stance that spawned it — unlike `resolve_cube`, nothing
+/// is paid out, because the player didn't complete the engagement.
+pub fn cancel_cube(cube: &mut CubeState) {
+    resolve_cube(cube);
+    cube.collected.clear();
+}
+
 /// Advance all active cube overlays by one server tick.
 ///
 /// Inactive cube on a Tank/Heal stance: if arc streak hits `CRITICAL_MASS_CAP`, activate.
@@ -213,7 +239,10 @@ pub fn tick_cube_states(
         );
 
         if !cube.active {
-            if is_tank_heal && arc.streak >= CUBE_CRITICAL_MASS_CAP {
+            if is_tank_heal
+                && arc.streak.saturating_sub(arc.streak_at_last_activation)
+                    >= CUBE_CRITICAL_MASS_CAP
+            {
                 activate_cube(&mut cube, &mut arc);
             }
             continue;

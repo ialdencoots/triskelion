@@ -5,8 +5,10 @@ use bevy::ui::{
 };
 
 use shared::components::minigame::cube::{
-    BonusTier, CubeEdge, CubeState, PhysicalBonus, CUBE_COLLECT_WINDOW,
+    CubeEdge, CubeState, PhysicalBonus, CUBE_COLLECT_WINDOW, CUBE_ROTATIONS_PER_ACTIVATION,
 };
+
+use super::theme::{APEX_RED, NADIR_GREEN};
 
 /// How big the landed marker gets at peak pop.
 const POP_PEAK_SCALE: f32 = 1.45;
@@ -34,18 +36,18 @@ const MARKER_W_PX: f32 = 56.0;
 /// Bonus marker height, px.
 const MARKER_H_PX: f32 = 24.0;
 
-// Colour palettes keyed by activation-quality tier.
-fn tier_edge_colour(tier: BonusTier) -> Color {
-    match tier {
-        BonusTier::Default => Color::srgba(0.55, 0.60, 0.72, 0.85),
-        BonusTier::Mid => Color::srgba(0.35, 0.78, 0.92, 0.90),
-        BonusTier::Premium => Color::srgba(0.98, 0.82, 0.32, 0.95),
-    }
+/// Cube edge color — green at full rotations, red when depleted. Replaces the
+/// tier-based palette so the cube visually communicates rotations remaining
+/// (and the "Rotations: N" text that used to live on the cube).
+fn rotations_gradient(remaining: u32) -> Color {
+    let total = CUBE_ROTATIONS_PER_ACTIVATION.max(1);
+    let consumed = (total.saturating_sub(remaining) as f32 / total as f32).clamp(0.0, 1.0);
+    mix_colors(NADIR_GREEN, APEX_RED, consumed)
 }
 
-/// Shared dim/bright/hot palette derived from the tier edge colour. Used by
-/// both the wireframe and the corner fills so the fill phase and rotation
-/// phase read as the same lit object.
+/// Shared dim/bright/hot palette derived from the edge colour. Used by both
+/// the wireframe and the corner fills so the fill phase and rotation phase
+/// read as the same lit object.
 struct EdgePalette {
     dim: Color,
     bright: Color,
@@ -63,16 +65,14 @@ impl EdgePalette {
     }
 }
 
-fn tier_marker_fill(tier: BonusTier, lit: bool) -> Color {
-    let (r, g, b) = match tier {
-        BonusTier::Default => (0.32, 0.36, 0.46),
-        BonusTier::Mid => (0.12, 0.42, 0.56),
-        BonusTier::Premium => (0.70, 0.52, 0.14),
-    };
+/// Neutral marker background — stays tier-agnostic so the edge-color gradient
+/// reads as the dominant state signal. Brightens when the edge is "lit"
+/// (inside the collect window or during the hit-pop).
+fn marker_fill(lit: bool) -> Color {
     if lit {
-        Color::srgba(r * 1.8, g * 1.8, b * 1.8, 1.0)
+        Color::srgba(0.28, 0.28, 0.36, 1.0)
     } else {
-        Color::srgba(r, g, b, 0.85)
+        Color::srgba(0.12, 0.12, 0.18, 0.85)
     }
 }
 
@@ -101,10 +101,6 @@ pub struct CubeMarker(pub CubeEdge);
 /// Text label inside a marker. Updated with the bonus's short label on face swap.
 #[derive(Component, Clone, Copy)]
 pub struct CubeMarkerText(pub CubeEdge);
-
-/// Text node displaying rotations remaining, top-center of the cube.
-#[derive(Component)]
-pub struct CubeRotationsText;
 
 /// One of the 12 wireframe edges of the 3-D cube. Drawn only during a rotation
 /// animation — the 8 cube vertices are rotated + projected each frame and each
@@ -158,7 +154,7 @@ pub fn spawn_cube_overlay(mut commands: Commands, root_q: Query<Entity, With<Min
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(CUBE_LEFT_PX),
-                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
                     width: Val::Px(CUBE_SIZE_PX),
                     height: Val::Px(CUBE_SIZE_PX),
                     ..default()
@@ -166,33 +162,6 @@ pub fn spawn_cube_overlay(mut commands: Commands, root_q: Query<Entity, With<Min
                 Visibility::Hidden,
             ))
             .with_children(|cube| {
-                // Rotations-remaining label, anchored slightly below the top edge.
-                cube.spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(50.0),
-                        top: Val::Px(6.0),
-                        margin: UiRect {
-                            left: Val::Px(-40.0),
-                            ..default()
-                        },
-                        width: Val::Px(80.0),
-                        justify_content: JustifyContent::Center,
-                        ..default()
-                    },
-                ))
-                .with_children(|wrap| {
-                    wrap.spawn((
-                        CubeRotationsText,
-                        Text::new(""),
-                        TextFont {
-                            font_size: 11.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgba(0.85, 0.85, 0.90, 0.95)),
-                    ));
-                });
-
                 for edge in CubeEdge::ALL {
                     spawn_edge(cube, edge);
                 }
@@ -361,11 +330,7 @@ pub fn render_cube(
     mut root_q: Query<&mut Visibility, With<CubeRoot>>,
     mut fill_q: Query<
         (&CubeFill, &mut Node, &mut BackgroundGradient),
-        (
-            Without<CubeMarker>,
-            Without<CubeRotationsText>,
-            Without<CubeWireEdge>,
-        ),
+        (Without<CubeMarker>, Without<CubeWireEdge>),
     >,
     mut marker_q: Query<
         (
@@ -374,15 +339,9 @@ pub fn render_cube(
             &mut BorderColor,
             &mut UiTransform,
         ),
-        (
-            Without<CubeFill>,
-            Without<CubeRotationsText>,
-            Without<CubeWireEdge>,
-            Without<CubeRoot>,
-        ),
+        (Without<CubeFill>, Without<CubeWireEdge>, Without<CubeRoot>),
     >,
     mut marker_text_q: Query<(&CubeMarkerText, &mut Text)>,
-    mut rotations_text_q: Query<&mut Text, (With<CubeRotationsText>, Without<CubeMarkerText>)>,
     mut wire_q: Query<
         (
             &CubeWireEdge,
@@ -421,8 +380,7 @@ pub fn render_cube(
         })
         .unwrap_or((0.0, 0.0));
 
-    let tier = BonusTier::from_quality(cube.activation_quality);
-    let edge_colour = tier_edge_colour(tier);
+    let edge_colour = rotations_gradient(cube.rotations_remaining);
     let in_window = (cube.fill_progress - 1.0).abs() <= CUBE_COLLECT_WINDOW;
 
     // Phase detection. `rotating_edge` is `Some` through the whole post-collect
@@ -494,7 +452,7 @@ pub fn render_cube(
         xform.scale = Vec2::splat(scale);
 
         // During the pop, brighten the landed marker's fill toward "hot".
-        let base_fill = tier_marker_fill(tier, in_window || popping);
+        let base_fill = marker_fill(in_window || popping);
         let fill_col = if is_landed {
             scale_color(base_fill, 1.0 + (POP_PEAK_BRIGHTNESS - 1.0) * pop_t)
         } else {
@@ -521,14 +479,6 @@ pub fn render_cube(
             .unwrap_or("");
         if text.0.as_str() != label {
             text.0 = label.to_string();
-        }
-    }
-
-    // ── Rotations counter ────────────────────────────────────────────────────
-    for mut text in rotations_text_q.iter_mut() {
-        let new = format!("Rotations: {}", cube.rotations_remaining);
-        if text.0 != new {
-            text.0 = new;
         }
     }
 }

@@ -19,7 +19,7 @@ use shared::messages::{DamageNumberMsg, SelectTargetMsg};
 
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
-use super::minigame::{process_arc_commit, process_cube_collect};
+use super::minigame::{cancel_cube, process_arc_commit, process_cube_collect};
 
 // ── Server-only threat components ────────────────────────────────────────────
 
@@ -127,6 +127,7 @@ pub fn process_player_inputs(
             pos.y = input.y;
 
             // ── Stance transitions ─────────────────────────────────────────────
+            let prev_stance = combat.active_stance;
             if input.abilities.exit_stance {
                 combat.active_stance = None;
             } else if let Some(stance) = input.abilities.enter_stance {
@@ -136,6 +137,31 @@ pub fn process_player_inputs(
                 } else {
                     Some(stance)
                 };
+            }
+            // Any stance change wipes arc streak state — a streak only means
+            // something inside a contiguous stance session. Carrying streaks
+            // across stances would let players farm Tank cubes and then cash
+            // them in under DPS (or vice versa). The cube/grid also cancels:
+            // an active cube that outlives its stance is unreachable (the
+            // input handlers gate on stance) and would sit there orphaned.
+            if prev_stance != combat.active_stance {
+                if let Some(ref mut arc) = arc_opt {
+                    arc.streak = 0;
+                    arc.streak_at_last_activation = 0;
+                    arc.apex_visits_since_commit = 0;
+                    arc.recent_commit_qualities.clear();
+                }
+                if let Some(ref mut secondary) = secondary_arc_opt {
+                    secondary.0.streak = 0;
+                    secondary.0.streak_at_last_activation = 0;
+                    secondary.0.apex_visits_since_commit = 0;
+                    secondary.0.recent_commit_qualities.clear();
+                }
+                if let Some(ref mut cube) = cube_opt {
+                    if cube.active {
+                        cancel_cube(cube);
+                    }
+                }
             }
 
             // ── Arc commits (Physical class) ───────────────────────────────────

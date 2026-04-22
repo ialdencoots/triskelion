@@ -56,9 +56,23 @@ pub struct ArcState {
     /// client to push accurate ghost history entries.
     pub last_commit_theta: f32,
     /// Consecutive commits that landed in the nadir zone without an apex-zone commit.
-    /// Resets on an apex-zone commit; mid-zone commits neither increment nor reset.
-    /// Primary input to cube/grid activation (streak cap triggers the overlay).
+    /// Resets to 0 only on an apex-zone commit — mid-zone commits neither increment nor
+    /// reset, and cube activation does NOT reset the streak. This makes the streak a
+    /// running consistency counter visible to the player, while activation is gated on
+    /// the *delta* since the last activation (see `streak_at_last_activation`).
     pub streak: u32,
+    /// Snapshot of `streak` at the moment the cube (or, in DPS, the grid) last
+    /// activated. Activation fires when `streak - streak_at_last_activation` reaches
+    /// the critical-mass cap. Reset to 0 alongside `streak` on an apex-zone break.
+    pub streak_at_last_activation: u32,
+    /// Count of apex-zone visits (proximity ≥ 0.9 rising edges) since the last
+    /// commit. Reset on commit. When it reaches 2 (a full oscillation elapsed
+    /// with no commit), the streak breaks — punishes idleness during an active
+    /// streak.
+    pub apex_visits_since_commit: u32,
+    /// Previous tick's at-apex state — drives rising-edge detection for
+    /// `apex_visits_since_commit`.
+    pub prev_at_apex: bool,
     /// Ring buffer of the last `CRITICAL_MASS_CAP` commit qualities (newest at front).
     /// Cube reads the aggregate mean at activation to gate bonus tier; grid reads
     /// per-step magnitudes when traversing.
@@ -84,6 +98,9 @@ impl Default for ArcState {
             last_commit_quality: 0.0,
             last_commit_theta: std::f32::consts::FRAC_PI_2,
             streak: 0,
+            streak_at_last_activation: 0,
+            apex_visits_since_commit: 0,
+            prev_at_apex: false,
             recent_commit_qualities: VecDeque::with_capacity(QUALITY_HISTORY_CAPACITY as usize),
         }
     }
