@@ -133,8 +133,11 @@ pub fn gather_and_send_input(
     // Right mouse locks facing to camera; otherwise track the player's actual rotation.
     *char_facing = if right_mouse { orbit.yaw } else { player_yaw };
 
-    let primary_commit = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let primary_commit   = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
     let secondary_commit = bindings.0.get(3).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let cube_left   = bindings.0.get(5).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let cube_bottom = bindings.0.get(6).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let cube_right  = bindings.0.get(7).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
 
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),
@@ -146,7 +149,9 @@ pub fn gather_and_send_input(
         minigame: MinigameInput {
             action_1: primary_commit,
             action_2: secondary_commit,
-            ..default()
+            action_3: cube_left,
+            action_4: cube_bottom,
+            action_5: cube_right,
         },
         facing_yaw: *char_facing,
     });

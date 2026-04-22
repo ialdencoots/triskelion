@@ -29,6 +29,8 @@ impl Plugin for HudPlugin {
                 // Arc overlay must run after minigame_anchor so MinigameRoot exists.
                 crate::ui::arc::spawn_arc_overlay
                     .after(minigame_anchor::spawn_minigame_root),
+                crate::ui::cube::spawn_cube_overlay
+                    .after(minigame_anchor::spawn_minigame_root),
                 group_frame::spawn_group_frame,
                 instance_button::spawn_instance_button,
                 selection_indicator::spawn_selection_indicator,

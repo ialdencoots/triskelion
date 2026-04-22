@@ -347,8 +347,10 @@ pub fn render_arc(
         // Primary arc — in DPS pass a sparse ghost (commit pulse/theta only, no trail).
         if let Ok((mut vis, mut node, mat_handle, computed)) = primary_q.single_mut() {
             *vis = if in_stance { Visibility::Visible } else { Visibility::Hidden };
-            node.width = if in_dps { Val::Percent(50.0) } else { Val::Percent(100.0) };
-            node.left  = if in_dps { Val::Percent(37.0) } else { Val::Px(0.0) };
+            // Tank/Heal: centered at 50% width, matching one DPS arc.
+            // DPS: primary (right) at left=37%; secondary lives at left=13%.
+            node.width = Val::Percent(50.0);
+            node.left  = if in_dps { Val::Percent(37.0) } else { Val::Percent(25.0) };
 
             if let Some(mat) = arc_materials.get_mut(mat_handle.id()) {
                 let size = computed.size();

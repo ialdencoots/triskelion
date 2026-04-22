@@ -2,14 +2,21 @@ use std::f32::consts::FRAC_PI_2;
 
 use bevy::prelude::*;
 
+use shared::components::combat::CombatState;
 use shared::components::minigame::{
-    arc::{ArcState, SecondaryArcState},
+    arc::{ArcState, SecondaryArcState, CUBE_CRITICAL_MASS_CAP, QUALITY_HISTORY_CAPACITY},
     bar_fill::BarFillState,
-    cube::CubeState,
+    cube::{
+        BonusTier, CubeState, PhysicalBonus, CUBE_FILL_CYCLE_SECS, CUBE_FILL_RESET_AT,
+        CUBE_ROTATIONS_PER_ACTIVATION, CUBE_ROTATION_SECS,
+    },
     heartbeat::HeartbeatState,
     value_lock::ValueLockState,
     wave_interference::WaveInterferenceState,
 };
+use shared::components::player::RoleStance;
+
+use super::combat::next_unit;
 
 fn tick_arc(arc: &mut ArcState, dt: f32) {
     arc.disruption_velocity *= (-dt * 0.5_f32).exp();
@@ -34,6 +41,13 @@ pub fn process_arc_commit(arc: &mut ArcState) {
     let peak_vel = arc.amplitude * arc.omega;
     arc.last_commit_quality = (dot_vel.abs() / peak_vel).min(1.0);
     arc.last_commit_theta = arc.theta;
+
+    // Push quality into the ring buffer (newest at front, capped by QUALITY_HISTORY_CAPACITY).
+    arc.recent_commit_qualities.push_front(arc.last_commit_quality);
+    if arc.recent_commit_qualities.len() > QUALITY_HISTORY_CAPACITY as usize {
+        arc.recent_commit_qualities.pop_back();
+    }
+
     let proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
     if proximity < 0.2 {
         arc.streak += 1;
@@ -59,14 +73,177 @@ pub fn tick_secondary_arc_states(time: Res<Time>, mut query: Query<&mut Secondar
     }
 }
 
+// ── Cube ─────────────────────────────────────────────────────────────────────
+
+/// Mean of the quality buffer, clamped to [0, 1]. Returns 0 if empty.
+fn aggregate_quality(arc: &ArcState) -> f32 {
+    if arc.recent_commit_qualities.is_empty() {
+        return 0.0;
+    }
+    let sum: f32 = arc.recent_commit_qualities.iter().sum();
+    (sum / arc.recent_commit_qualities.len() as f32).clamp(0.0, 1.0)
+}
+
+/// Seed one edge's bonus drawn from a tier-appropriate pool. Skill tree weighting
+/// is deferred; this picks uniformly within the tier band.
+fn sample_bonus(tier: BonusTier) -> PhysicalBonus {
+    let roll = next_unit();
+    match tier {
+        BonusTier::Default => match (roll * 3.0) as u32 {
+            0 => PhysicalBonus::BaseDamage(8.0),
+            1 => PhysicalBonus::AggroBonus(0.15),
+            _ => PhysicalBonus::CooldownReduction(0.5),
+        },
+        BonusTier::Mid => match (roll * 3.0) as u32 {
+            0 => PhysicalBonus::BaseDamage(20.0),
+            1 => PhysicalBonus::DamageOverTime {
+                damage_per_second: 10.0,
+                duration_secs: 3.0,
+            },
+            _ => PhysicalBonus::StunOnHit { duration_secs: 0.5 },
+        },
+        BonusTier::Premium => match (roll * 3.0) as u32 {
+            0 => PhysicalBonus::BaseDamage(40.0),
+            1 => PhysicalBonus::StunOnHit { duration_secs: 1.0 },
+            _ => PhysicalBonus::Healing(20.0),
+        },
+    }
+}
+
+/// Seed three fresh bonus markers for a new face. The dominant tier comes from
+/// `activation_quality`; per the design, mid/premium activations still occasionally
+/// surface default-tier entries (here: 20% chance to step down one tier per slot).
+fn seed_face(activation_quality: f32) -> [Option<PhysicalBonus>; 3] {
+    let base = BonusTier::from_quality(activation_quality);
+    std::array::from_fn(|_| {
+        let tier = if next_unit() < 0.2 {
+            // Step down one tier for variety; premium drops to mid, mid to default.
+            match base {
+                BonusTier::Premium => BonusTier::Mid,
+                BonusTier::Mid => BonusTier::Default,
+                BonusTier::Default => BonusTier::Default,
+            }
+        } else {
+            base
+        };
+        Some(sample_bonus(tier))
+    })
+}
+
+/// Open the cube: freeze aggregate quality, seed a fresh face, reset fill.
+/// Assumes the caller has already verified the streak cap and role gate.
+pub fn activate_cube(cube: &mut CubeState, arc: &mut ArcState) {
+    let q = aggregate_quality(arc);
+    cube.active = true;
+    cube.activation_quality = q;
+    cube.fill_progress = 0.0;
+    cube.rotations_remaining = CUBE_ROTATIONS_PER_ACTIVATION;
+    cube.current_face = seed_face(q);
+    cube.collected.clear();
+    cube.rotating_edge = None;
+    cube.rotation_progress = 0.0;
+    cube.new_face_pending = false;
+    // Consume the streak that triggered the cube; arc play rebuilds from zero.
+    arc.streak = 0;
+}
+
+/// Try to collect the bonus on `edge` of the current face. Returns true on
+/// success. The collected bonus and timing precision are recorded; the face
+/// swap and resolution are deferred until the rotation animation completes
+/// (see `tick_cube_states`).
+pub fn process_cube_collect(
+    cube: &mut CubeState,
+    edge: shared::components::minigame::cube::CubeEdge,
+) -> bool {
+    if !cube.active || cube.rotating_edge.is_some() {
+        return false;
+    }
+    let Some(precision) =
+        shared::components::minigame::cube::timing_precision(cube.fill_progress)
+    else {
+        return false;
+    };
+    let Some(bonus) = cube.current_face[edge.index()].clone() else {
+        return false;
+    };
+    cube.collected.push((bonus, precision));
+    cube.rotations_remaining = cube.rotations_remaining.saturating_sub(1);
+    cube.rotating_edge = Some(edge);
+    cube.rotation_progress = 0.0;
+    cube.new_face_pending = true;
+    cube.fill_progress = 0.0;
+    true
+}
+
+/// Finalize the cube activation. Bonuses in `collected` are the eventual payload;
+/// rider/window/charge resolution is a follow-up system (see design doc).
+fn resolve_cube(cube: &mut CubeState) {
+    cube.active = false;
+    cube.fill_progress = 0.0;
+    cube.rotations_remaining = 0;
+    cube.current_face = [None, None, None];
+    cube.rotating_edge = None;
+    cube.rotation_progress = 0.0;
+    cube.new_face_pending = false;
+    // `collected` is left populated for the resolution system to drain.
+}
+
 /// Advance all active cube overlays by one server tick.
 ///
-/// Per tick:
-/// - If inactive: check arc streak cap; on trigger, seed face bonuses from
-///   skill-tree × aggregate-quality and open the overlay.
-/// - If active: advance `fill_progress`; on timing input, collect bonus, rotate,
-///   decrement `rotations_remaining`. At 0: resolve `collected` and close the overlay.
-pub fn tick_cube_states(time: Res<Time>, mut query: Query<&mut CubeState>) {}
+/// Inactive cube on a Tank/Heal stance: if arc streak hits `CRITICAL_MASS_CAP`, activate.
+/// Active cube: advance `fill_progress`; reset to 0 when it sweeps past the collect
+/// window without a collect. Rotation/resolution are driven by input, not time.
+pub fn tick_cube_states(
+    time: Res<Time>,
+    mut query: Query<(&mut CubeState, &mut ArcState, &CombatState)>,
+) {
+    let dt = time.delta_secs();
+    for (mut cube, mut arc, combat) in query.iter_mut() {
+        let is_tank_heal = matches!(
+            combat.active_stance,
+            Some(RoleStance::Tank) | Some(RoleStance::Heal)
+        );
+
+        if !cube.active {
+            if is_tank_heal && arc.streak >= CUBE_CRITICAL_MASS_CAP {
+                activate_cube(&mut cube, &mut arc);
+            }
+            continue;
+        }
+
+        // Rotation animation takes precedence over fill advancement.
+        if cube.rotating_edge.is_some() {
+            cube.rotation_progress += dt / CUBE_ROTATION_SECS;
+
+            // Face swap happens at the midpoint (edge-on moment). If this is
+            // the final rotation, seed an empty face so the cube fades to
+            // nothing before `resolve_cube` closes it at animation end.
+            if cube.new_face_pending && cube.rotation_progress >= 0.5 {
+                cube.new_face_pending = false;
+                if cube.rotations_remaining > 0 {
+                    cube.current_face = seed_face(cube.activation_quality);
+                } else {
+                    cube.current_face = [None, None, None];
+                }
+            }
+
+            if cube.rotation_progress >= 1.0 {
+                cube.rotating_edge = None;
+                cube.rotation_progress = 0.0;
+                if cube.rotations_remaining == 0 {
+                    resolve_cube(&mut cube);
+                }
+            }
+            continue;
+        }
+
+        cube.fill_progress += dt / CUBE_FILL_CYCLE_SECS;
+        if cube.fill_progress >= CUBE_FILL_RESET_AT {
+            // Swept past the window without a collect — cycle the face again.
+            cube.fill_progress = 0.0;
+        }
+    }
+}
 
 /// Advance all active Bar Fill states by one server tick.
 ///

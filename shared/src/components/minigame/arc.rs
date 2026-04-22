@@ -1,5 +1,20 @@
+use std::collections::VecDeque;
+
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+
+/// Streak count at which the Tank/Heal cube activates.  Tuned shorter than the
+/// grid cap so cube cycles feel tight and the per-activation payout is small.
+pub const CUBE_CRITICAL_MASS_CAP: u32 = 2;
+
+/// Streak count at which the DPS grid force-activates (it also activates on
+/// streak break). Larger than the cube cap so the step budget is meaningful.
+pub const GRID_CRITICAL_MASS_CAP: u32 = 10;
+
+/// Capacity of `ArcState::recent_commit_qualities`. Sized to the grid cap so
+/// per-step magnitude lookups always have data; the cube reads the aggregate
+/// mean and is unaffected by the extra tail entries.
+pub const QUALITY_HISTORY_CAPACITY: u32 = GRID_CRITICAL_MASS_CAP;
 
 /// Server-authoritative state for the Physical class Arc mechanic.
 ///
@@ -44,6 +59,10 @@ pub struct ArcState {
     /// Resets on an apex-zone commit; mid-zone commits neither increment nor reset.
     /// Primary input to cube/grid activation (streak cap triggers the overlay).
     pub streak: u32,
+    /// Ring buffer of the last `CRITICAL_MASS_CAP` commit qualities (newest at front).
+    /// Cube reads the aggregate mean at activation to gate bonus tier; grid reads
+    /// per-step magnitudes when traversing.
+    pub recent_commit_qualities: VecDeque<f32>,
 }
 
 /// Second independent arc for Physical DPS stance (one per weapon).
@@ -65,6 +84,7 @@ impl Default for ArcState {
             last_commit_quality: 0.0,
             last_commit_theta: std::f32::consts::FRAC_PI_2,
             streak: 0,
+            recent_commit_qualities: VecDeque::with_capacity(QUALITY_HISTORY_CAPACITY as usize),
         }
     }
 }

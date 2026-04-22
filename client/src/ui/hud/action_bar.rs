@@ -11,7 +11,7 @@ const SLOT_GAP: f32 = 6.0;
 const BAR_BOTTOM_PAD: f32 = 18.0;
 
 /// Role/function labels for each slot (displayed at the top of stance slots).
-static SLOT_LABELS: &[&str] = &["Tank", "DPS", "Heal", "Secondary", "Primary", ""];
+static SLOT_LABELS: &[&str] = &["Tank", "DPS", "Heal", "Secondary", "Primary", "Cube-L", "Cube-B", "Cube-R"];
 
 /// Marks the keybind text node for a given slot so it can be updated
 /// when bindings change.

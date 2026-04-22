@@ -7,6 +7,7 @@ use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Heal
 use shared::components::enemy::{EnemyMarker, EnemyPosition};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
+use shared::components::minigame::cube::{CubeEdge, CubeState};
 use shared::components::player::{
     PlayerId, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
 };
@@ -18,7 +19,7 @@ use shared::messages::{DamageNumberMsg, SelectTargetMsg};
 
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
-use super::minigame::process_arc_commit;
+use super::minigame::{process_arc_commit, process_cube_collect};
 
 // ── Server-only threat components ────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ pub fn process_player_inputs(
         Option<&InstanceId>,
         Option<&mut ArcState>,
         Option<&mut SecondaryArcState>,
+        Option<&mut CubeState>,
         Option<&PlayerSelectedTarget>,
     ), With<PlayerId>>,
     enemy_query: Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
@@ -97,7 +99,16 @@ pub fn process_player_inputs(
     for (link, mut receiver) in link_query.iter_mut() {
         // Use the most recent input in the buffer; ignore stale ones.
         let last_input = receiver.receive().last();
-        let Ok((mut pos, mut vel, mut combat, iid_opt, mut arc_opt, mut secondary_arc_opt, target_opt)) = player_query.get_mut(link.0) else { continue };
+        let Ok((
+            mut pos,
+            mut vel,
+            mut combat,
+            iid_opt,
+            mut arc_opt,
+            mut secondary_arc_opt,
+            mut cube_opt,
+            target_opt,
+        )) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
             // ── Movement ───────────────────────────────────────────────────────
@@ -165,6 +176,27 @@ pub fn process_player_inputs(
                             &enemy_query,
                             &mut damage_writer,
                         );
+                    }
+                }
+            }
+
+            // ── Cube collects (Tank/Heal only) ─────────────────────────────────
+            // Client binds A/X/G → action_3/4/5 for Left/Bottom/Right; action_2
+            // stays dedicated to the DPS secondary arc so slots never overlap.
+            let in_tank_heal = matches!(
+                combat.active_stance,
+                Some(RoleStance::Tank) | Some(RoleStance::Heal)
+            );
+            if in_tank_heal {
+                if let Some(ref mut cube) = cube_opt {
+                    if input.minigame.action_3 {
+                        process_cube_collect(cube, CubeEdge::Left);
+                    }
+                    if input.minigame.action_4 {
+                        process_cube_collect(cube, CubeEdge::Bottom);
+                    }
+                    if input.minigame.action_5 {
+                        process_cube_collect(cube, CubeEdge::Right);
                     }
                 }
             }
@@ -286,7 +318,7 @@ static COMBAT_RNG: AtomicU64 = AtomicU64::new(0xDEADBEEF_CAFEBABE);
 /// Returns a pseudo-random f32 in [0.0, 1.0). SplitMix64 scramble — cheap,
 /// non-cryptographic, good enough for gameplay rolls. Not deterministic across
 /// runs (counter starts from a fixed seed but order of calls varies).
-fn next_unit() -> f32 {
+pub(crate) fn next_unit() -> f32 {
     let seed = COMBAT_RNG.fetch_add(1, Ordering::Relaxed);
     let mut x = seed.wrapping_add(0x9E3779B97F4A7C15);
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);

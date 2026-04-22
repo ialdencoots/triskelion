@@ -55,7 +55,8 @@ pub struct MinigameInput {
     pub action_1: bool,
     /// Secondary mechanic input.
     pub action_2: bool,
-    /// Additional mechanic inputs
+    /// Additional mechanic inputs.
     pub action_3: bool,
     pub action_4: bool,
+    pub action_5: bool,
 }
