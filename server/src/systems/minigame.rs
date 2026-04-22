@@ -8,7 +8,8 @@ use shared::components::minigame::{
     bar_fill::BarFillState,
     cube::{
         BonusTier, CubeState, PhysicalBonus, CUBE_FILL_CYCLE_SECS, CUBE_FILL_RESET_AT,
-        CUBE_ROTATIONS_PER_ACTIVATION, CUBE_ROTATION_SECS,
+        CUBE_POP_SECS, CUBE_ROTATIONS_PER_ACTIVATION, CUBE_ROTATION_HOLD_SECS,
+        CUBE_ROTATION_SECS,
     },
     heartbeat::HeartbeatState,
     value_lock::ValueLockState,
@@ -141,16 +142,18 @@ pub fn activate_cube(cube: &mut CubeState, arc: &mut ArcState) {
     cube.current_face = seed_face(q);
     cube.collected.clear();
     cube.rotating_edge = None;
+    cube.pop_progress = 0.0;
     cube.rotation_progress = 0.0;
+    cube.rotation_hold_remaining = 0.0;
     cube.new_face_pending = false;
     // Consume the streak that triggered the cube; arc play rebuilds from zero.
     arc.streak = 0;
 }
 
 /// Try to collect the bonus on `edge` of the current face. Returns true on
-/// success. The collected bonus and timing precision are recorded; the face
-/// swap and resolution are deferred until the rotation animation completes
-/// (see `tick_cube_states`).
+/// success. The collected bonus and timing precision are recorded and the
+/// post-collect animation sequence begins (pop → rotation → hold); the face
+/// swap and resolution are driven from `tick_cube_states`.
 pub fn process_cube_collect(
     cube: &mut CubeState,
     edge: shared::components::minigame::cube::CubeEdge,
@@ -169,9 +172,12 @@ pub fn process_cube_collect(
     cube.collected.push((bonus, precision));
     cube.rotations_remaining = cube.rotations_remaining.saturating_sub(1);
     cube.rotating_edge = Some(edge);
+    cube.pop_progress = 0.0;
     cube.rotation_progress = 0.0;
+    cube.rotation_hold_remaining = 0.0;
     cube.new_face_pending = true;
-    cube.fill_progress = 0.0;
+    // `fill_progress` is left at whatever it was — the fills read as "full"
+    // during the pop phase so the hit visually freezes a beat before rotating.
     true
 }
 
@@ -183,7 +189,9 @@ fn resolve_cube(cube: &mut CubeState) {
     cube.rotations_remaining = 0;
     cube.current_face = [None, None, None];
     cube.rotating_edge = None;
+    cube.pop_progress = 0.0;
     cube.rotation_progress = 0.0;
+    cube.rotation_hold_remaining = 0.0;
     cube.new_face_pending = false;
     // `collected` is left populated for the resolution system to drain.
 }
@@ -211,25 +219,38 @@ pub fn tick_cube_states(
             continue;
         }
 
-        // Rotation animation takes precedence over fill advancement.
+        // Post-collect animation pipeline takes precedence over fill advance.
+        // Phases (in order, gated on `rotating_edge.is_some()`):
+        //   1. Pop: landed marker pops (client-side visual), `pop_progress` 0→1
+        //   2. Rotation: cube turns 90°, face swap at midpoint
+        //   3. Hold: cube sits face-on at new face for a beat
+        //   4. Exit: clear rotating_edge, reset fill, possibly resolve
         if cube.rotating_edge.is_some() {
-            cube.rotation_progress += dt / CUBE_ROTATION_SECS;
-
-            // Face swap happens at the midpoint (edge-on moment). If this is
-            // the final rotation, seed an empty face so the cube fades to
-            // nothing before `resolve_cube` closes it at animation end.
-            if cube.new_face_pending && cube.rotation_progress >= 0.5 {
-                cube.new_face_pending = false;
-                if cube.rotations_remaining > 0 {
-                    cube.current_face = seed_face(cube.activation_quality);
-                } else {
-                    cube.current_face = [None, None, None];
+            if cube.pop_progress < 1.0 {
+                cube.pop_progress = (cube.pop_progress + dt / CUBE_POP_SECS).min(1.0);
+            } else if cube.rotation_progress < 1.0 {
+                cube.rotation_progress += dt / CUBE_ROTATION_SECS;
+                if cube.new_face_pending && cube.rotation_progress >= 0.5 {
+                    cube.new_face_pending = false;
+                    if cube.rotations_remaining > 0 {
+                        cube.current_face = seed_face(cube.activation_quality);
+                    } else {
+                        cube.current_face = [None, None, None];
+                    }
                 }
-            }
-
-            if cube.rotation_progress >= 1.0 {
+                if cube.rotation_progress >= 1.0 {
+                    cube.rotation_progress = 1.0;
+                    cube.rotation_hold_remaining = CUBE_ROTATION_HOLD_SECS;
+                }
+            } else if cube.rotation_hold_remaining > 0.0 {
+                cube.rotation_hold_remaining =
+                    (cube.rotation_hold_remaining - dt).max(0.0);
+            } else {
+                // Sequence complete — back to fill mode (or resolve).
                 cube.rotating_edge = None;
+                cube.pop_progress = 0.0;
                 cube.rotation_progress = 0.0;
+                cube.fill_progress = 0.0;
                 if cube.rotations_remaining == 0 {
                     resolve_cube(&mut cube);
                 }

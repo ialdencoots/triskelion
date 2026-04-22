@@ -8,6 +8,11 @@ use shared::components::minigame::cube::{
     BonusTier, CubeEdge, CubeState, PhysicalBonus, CUBE_COLLECT_WINDOW,
 };
 
+/// How big the landed marker gets at peak pop.
+const POP_PEAK_SCALE: f32 = 1.45;
+/// Multiplier applied to the popped marker's palette intensity at peak pop.
+const POP_PEAK_BRIGHTNESS: f32 = 1.6;
+
 use crate::plugin::LocalClientId;
 use crate::world::players::OwnServerEntity;
 
@@ -163,7 +168,6 @@ pub fn spawn_cube_overlay(mut commands: Commands, root_q: Query<Entity, With<Min
             .with_children(|cube| {
                 // Rotations-remaining label, anchored slightly below the top edge.
                 cube.spawn((
-                    CubeRotationsText,
                     Node {
                         position_type: PositionType::Absolute,
                         left: Val::Percent(50.0),
@@ -179,7 +183,8 @@ pub fn spawn_cube_overlay(mut commands: Commands, root_q: Query<Entity, With<Min
                 ))
                 .with_children(|wrap| {
                     wrap.spawn((
-                        Text::new("Rotations: 0"),
+                        CubeRotationsText,
+                        Text::new(""),
                         TextFont {
                             font_size: 11.0,
                             ..default()
@@ -254,6 +259,12 @@ fn spawn_edge(cube: &mut ChildSpawnerCommands, edge: CubeEdge) {
             bottom: Color::NONE,
             left: Color::NONE,
             right: Color::NONE,
+        },
+        // Driven during the pop phase — identity at rest.
+        UiTransform {
+            translation: Val2::ZERO,
+            scale: Vec2::ONE,
+            rotation: Rot2::IDENTITY,
         },
     ))
     .with_children(|m| {
@@ -357,11 +368,17 @@ pub fn render_cube(
         ),
     >,
     mut marker_q: Query<
-        (&CubeMarker, &mut BackgroundColor, &mut BorderColor),
+        (
+            &CubeMarker,
+            &mut BackgroundColor,
+            &mut BorderColor,
+            &mut UiTransform,
+        ),
         (
             Without<CubeFill>,
             Without<CubeRotationsText>,
             Without<CubeWireEdge>,
+            Without<CubeRoot>,
         ),
     >,
     mut marker_text_q: Query<(&CubeMarkerText, &mut Text)>,
@@ -407,15 +424,22 @@ pub fn render_cube(
     let tier = BonusTier::from_quality(cube.activation_quality);
     let edge_colour = tier_edge_colour(tier);
     let in_window = (cube.fill_progress - 1.0).abs() <= CUBE_COLLECT_WINDOW;
-    let rotating = cube.rotating_edge.is_some();
 
-    // ── Fills (only during the fill phase) ───────────────────────────────────
-    // While rotating, the wireframe is the sole cube visual; hide the corner
-    // fills so they don't double-draw with the wireframe's front-face edges.
+    // Phase detection. `rotating_edge` is `Some` through the whole post-collect
+    // sequence (pop → rotate → hold). Only the pop sub-phase should still draw
+    // fills + markers; the rotate/hold sub-phases are wireframe-only.
+    let landed = cube.rotating_edge;
+    let popping = landed.is_some() && cube.pop_progress < 1.0;
+    let rotating_or_holding = landed.is_some() && !popping;
+    let pop_t = pop_curve(cube.pop_progress);
+
+    // ── Fills ────────────────────────────────────────────────────────────────
+    // Fills stay drawn during the pop so the hit visually freezes a beat; they
+    // hide once the wireframe takes over for rotate + hold.
     let fill_palette = EdgePalette::from_base(edge_colour, 1.0);
     for (fill, mut node, mut bg) in fill_q.iter_mut() {
         let max_len = max_fill_length(fill.edge, cube_w, cube_h);
-        let t = if rotating {
+        let t = if rotating_or_holding {
             0.0
         } else {
             cube.fill_progress.min(1.0).max(0.0)
@@ -433,7 +457,7 @@ pub fn render_cube(
             }
         }
 
-        *bg = if rotating {
+        *bg = if rotating_or_holding {
             BackgroundGradient::default()
         } else {
             BackgroundGradient(vec![fill_gradient(
@@ -444,10 +468,12 @@ pub fn render_cube(
         };
     }
 
-    // ── Markers (only during the fill phase) ─────────────────────────────────
-    for (marker, mut bg, mut border) in marker_q.iter_mut() {
+    // ── Markers ──────────────────────────────────────────────────────────────
+    // Visible during fill + pop; hidden while the wireframe is on. During the
+    // pop phase the landed marker scales up and brightens for hit feedback.
+    for (marker, mut bg, mut border, mut xform) in marker_q.iter_mut() {
         let has_bonus = cube.current_face[marker.0.index()].is_some();
-        if rotating || !has_bonus {
+        if rotating_or_holding || !has_bonus {
             *bg = BackgroundColor(Color::NONE);
             *border = BorderColor {
                 top: Color::NONE,
@@ -455,9 +481,25 @@ pub fn render_cube(
                 left: Color::NONE,
                 right: Color::NONE,
             };
+            xform.scale = Vec2::ONE;
             continue;
         }
-        let fill_col = tier_marker_fill(tier, in_window);
+
+        let is_landed = popping && landed == Some(marker.0);
+        let scale = if is_landed {
+            1.0 + (POP_PEAK_SCALE - 1.0) * pop_t
+        } else {
+            1.0
+        };
+        xform.scale = Vec2::splat(scale);
+
+        // During the pop, brighten the landed marker's fill toward "hot".
+        let base_fill = tier_marker_fill(tier, in_window || popping);
+        let fill_col = if is_landed {
+            scale_color(base_fill, 1.0 + (POP_PEAK_BRIGHTNESS - 1.0) * pop_t)
+        } else {
+            base_fill
+        };
         *bg = BackgroundColor(fill_col);
         let b = edge_colour;
         *border = BorderColor {
@@ -468,8 +510,8 @@ pub fn render_cube(
         };
     }
 
-    // ── Wireframe (only during rotation) ─────────────────────────────────────
-    update_wireframe(cube, &mut wire_q, edge_colour);
+    // ── Wireframe (rotate + hold only) ───────────────────────────────────────
+    update_wireframe(cube, &mut wire_q, edge_colour, rotating_or_holding);
 
     // ── Marker text ──────────────────────────────────────────────────────────
     for (marker_text, mut text) in marker_text_q.iter_mut() {
@@ -534,19 +576,26 @@ fn update_wireframe(
         (Without<CubeFill>, Without<CubeMarker>, Without<CubeRoot>),
     >,
     edge_colour: Color,
+    active: bool,
 ) {
     let Some(rot_edge) = cube.rotating_edge else {
-        // Clear all edge gradients when not rotating — the wireframe is
-        // only drawn during the rotation animation.
         for (_, _, mut bg, _) in wire_q.iter_mut() {
             *bg = BackgroundGradient::default();
         }
         return;
     };
+    if !active {
+        // Pop phase: `rotating_edge` is set but wireframe isn't shown yet.
+        for (_, _, mut bg, _) in wire_q.iter_mut() {
+            *bg = BackgroundGradient::default();
+        }
+        return;
+    }
 
     // A full 90° swing over the rotation animation brings the landed face to
-    // the front position — exactly one quarter-turn per collect.
-    let theta = cube.rotation_progress * std::f32::consts::FRAC_PI_2;
+    // the front position — exactly one quarter-turn per collect. During the
+    // hold phase `rotation_progress` stays at 1.0 and θ stays at π/2.
+    let theta = cube.rotation_progress.min(1.0) * std::f32::consts::FRAC_PI_2;
     let half = CUBE_SIZE_PX * 0.5;
     let rotated: [Vec3; 8] =
         std::array::from_fn(|i| rotate_vertex(CUBE_VERTS[i], rot_edge, theta));
@@ -653,6 +702,14 @@ fn scale_color(c: Color, factor: f32) -> Color {
         (s.blue * factor).clamp(0.0, 1.5),
         s.alpha,
     )
+}
+
+/// Ease-out-quad curve for the pop animation: accelerates early, settles at
+/// peak near `progress = 1`. Returns a value in [0, 1].
+fn pop_curve(progress: f32) -> f32 {
+    let p = progress.clamp(0.0, 1.0);
+    let inv = 1.0 - p;
+    1.0 - inv * inv
 }
 
 /// Linear interpolation between two sRGB colours at blend factor `t` ∈ [0, 1].

@@ -12,6 +12,12 @@ pub const CUBE_FILL_RESET_AT: f32 = 1.0 + CUBE_COLLECT_WINDOW;
 pub const CUBE_ROTATIONS_PER_ACTIVATION: u32 = 4;
 /// Total seconds for a single 90° cube rotation animation (half shrink, half grow).
 pub const CUBE_ROTATION_SECS: f32 = 0.35;
+/// Seconds the collected marker "pops" (scales + brightens) before the rotation
+/// actually begins — gives players a satisfying hit confirmation.
+pub const CUBE_POP_SECS: f32 = 0.12;
+/// Seconds the cube holds at the post-rotation face-on pose before returning to
+/// fill mode. Keeps the rotation from snapping back to fills immediately.
+pub const CUBE_ROTATION_HOLD_SECS: f32 = 0.15;
 
 /// Index of the interactive edge on a cube face. Order matches the
 /// `CubeState::current_face` array.
@@ -60,11 +66,19 @@ pub struct CubeState {
     /// Resolved on activation close.
     pub collected: Vec<(PhysicalBonus, f32)>,
     /// Edge toward which the cube is currently rotating, if any. `Some` for
-    /// the duration of the rotation animation; `None` when idle or filling.
+    /// the duration of the post-collect animation sequence (pop → rotation →
+    /// hold) and cleared once the cube returns to fill mode.
     pub rotating_edge: Option<CubeEdge>,
-    /// Progress [0, 1] through the current rotation. 0 = pre-rotation pose,
+    /// Progress [0, 1] through the pre-rotation marker pop. Runs first; while
+    /// < 1.0 no rotation has begun and the landed marker scales/brightens.
+    pub pop_progress: f32,
+    /// Progress [0, 1] through the 90° rotation itself. 0 = pre-rotation pose,
     /// 0.5 = edge-on (face swap happens here), 1 = post-rotation pose.
     pub rotation_progress: f32,
+    /// Seconds remaining in the post-rotation hold; counts down from
+    /// `CUBE_ROTATION_HOLD_SECS` while the wireframe sits face-on with the
+    /// new face before returning to fill mode.
+    pub rotation_hold_remaining: f32,
     /// True between collect and the midpoint of the rotation — signals that
     /// `current_face` still holds the pre-collect face and needs replacing.
     pub new_face_pending: bool,
