@@ -21,6 +21,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(UiMaterialPlugin::<ArcMaterial>::default());
         app.init_resource::<target_panel::ThreatDisplayData>();
+        app.init_resource::<action_bar::SlotClickPulse>();
         app.add_systems(
             OnEnter(AppState::InGame),
             (
@@ -63,6 +64,7 @@ impl Plugin for HudPlugin {
                 group_frame::handle_party_row_interaction,
                 action_bar::update_stance_highlight,
                 action_bar::update_keybind_labels,
+                action_bar::handle_action_slot_click,
                 instance_button::handle_instance_button,
                 // Threat panel: compute first, then apply.
                 target_panel::compute_threat_display,

@@ -11,6 +11,7 @@ use super::keybindings::ActionBarBindings;
 use shared::instances::sample_height;
 use shared::messages::SelectTargetMsg;
 
+use crate::ui::hud::action_bar::SlotClickPulse;
 use crate::world::camera::OrbitState;
 use crate::world::instance::CurrentInstanceTerrain;
 use crate::world::selection::SelectedTarget;
@@ -48,6 +49,7 @@ pub fn gather_and_send_input(
     orbit: Res<OrbitState>,
     terrain: Res<CurrentInstanceTerrain>,
     bindings: Res<ActionBarBindings>,
+    mut pulse: ResMut<SlotClickPulse>,
     player_query: Query<(&Transform, &LinearVelocity), With<PlayerMarker>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
     mut char_facing: Local<f32>,
@@ -113,12 +115,20 @@ pub fn gather_and_send_input(
         })
         .unwrap_or((0.0, 0.0, *char_facing));
 
-    // 1/2/3 enter Tank/DPS/Heal; Escape exits any active stance.
-    let enter_stance = if keyboard.just_pressed(KeyCode::Digit1) {
+    // A slot fires this frame if either its bound key was just pressed OR its
+    // on-screen button was just clicked (SlotClickPulse).
+    let slot_fired = |i: usize| -> bool {
+        let key_hit = bindings.0.get(i).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+        let click_hit = pulse.0.get(i).copied().unwrap_or(false);
+        key_hit || click_hit
+    };
+
+    // Slots 0/1/2 enter Tank/DPS/Heal; Escape exits any active stance.
+    let enter_stance = if slot_fired(0) {
         Some(RoleStance::Tank)
-    } else if keyboard.just_pressed(KeyCode::Digit2) {
+    } else if slot_fired(1) {
         Some(RoleStance::Dps)
-    } else if keyboard.just_pressed(KeyCode::Digit3) {
+    } else if slot_fired(2) {
         Some(RoleStance::Heal)
     } else {
         None
@@ -133,11 +143,15 @@ pub fn gather_and_send_input(
     // Right mouse locks facing to camera; otherwise track the player's actual rotation.
     *char_facing = if right_mouse { orbit.yaw } else { player_yaw };
 
-    let primary_commit   = bindings.0.get(4).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
-    let secondary_commit = bindings.0.get(3).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
-    let cube_left   = bindings.0.get(5).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
-    let cube_bottom = bindings.0.get(6).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
-    let cube_right  = bindings.0.get(7).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+    let primary_commit   = slot_fired(4);
+    let secondary_commit = slot_fired(3);
+    let cube_left   = slot_fired(5);
+    let cube_bottom = slot_fired(6);
+    let cube_right  = slot_fired(7);
+
+    // Clear the click pulse now that this frame's input has been read — next
+    // frame a click must press again to fire.
+    pulse.0 = [false; 8];
 
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),

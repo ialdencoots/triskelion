@@ -27,6 +27,12 @@ const HEAL_COLOR: Color = Color::srgb(0.25, 0.90, 0.45); // green
 #[derive(Component)]
 pub struct ActionSlot(pub u8);
 
+/// One-frame pulse set by mouse clicks on action-bar slots. `gather_and_send_input`
+/// OR-combines it with the keyboard press for the same slot, so clicks and
+/// keypresses share a single activation path through `PlayerInput`.
+#[derive(Resource, Default)]
+pub struct SlotClickPulse(pub [bool; 8]);
+
 pub fn spawn_action_bar(mut commands: Commands, bindings: Res<ActionBarBindings>) {
     let num_slots = SLOT_LABELS.len();
     let bar_width = num_slots as f32 * (SLOT_SIZE + SLOT_GAP) - SLOT_GAP;
@@ -46,6 +52,7 @@ pub fn spawn_action_bar(mut commands: Commands, bindings: Res<ActionBarBindings>
                 let key_str = keycode_label(bindings.0.get(i).copied());
                 bar.spawn((
                     ActionSlot(i as u8),
+                    Button,
                     Node {
                         width: Val::Px(SLOT_SIZE),
                         height: Val::Px(SLOT_SIZE),
@@ -142,6 +149,22 @@ fn keycode_label(key: Option<KeyCode>) -> String {
         Some(KeyCode::Tab)    => "Tab".into(),
         None                  => "".into(),
         _                     => "?".into(),
+    }
+}
+
+/// Records a one-frame click pulse for any slot whose button just entered the
+/// `Pressed` state. `gather_and_send_input` reads and clears the pulse so the
+/// click drives the same `PlayerInput` path as the bound key.
+pub fn handle_action_slot_click(
+    mut pulse: ResMut<SlotClickPulse>,
+    interaction_q: Query<(&Interaction, &ActionSlot), (Changed<Interaction>, With<Button>)>,
+) {
+    for (interaction, slot) in interaction_q.iter() {
+        if matches!(interaction, Interaction::Pressed) {
+            if let Some(bit) = pulse.0.get_mut(slot.0 as usize) {
+                *bit = true;
+            }
+        }
     }
 }
 
