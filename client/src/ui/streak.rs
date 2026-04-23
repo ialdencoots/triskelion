@@ -240,37 +240,23 @@ pub fn render_streak_counters(
     for (mut counter, mut vis, mut xform) in counter_q.iter_mut() {
         // Pull the streak + lockout bits for this counter's arc. `None` if the
         // stance doesn't match or the required component is missing.
-        let (stance_match, streak_opt, lockout_opt) = match counter.kind {
-            StreakCounterKind::TankHeal => {
-                let show = matches!(stance, Some(RoleStance::Tank) | Some(RoleStance::Heal));
-                let (s, l) = if show {
-                    (arc_opt.map(|a| a.streak), arc_opt.map(|a| a.in_lockout))
-                } else {
-                    (None, None)
-                };
-                (show && s.is_some(), s, l)
+        let arc_for_kind = match counter.kind {
+            StreakCounterKind::TankHeal
+                if matches!(stance, Some(RoleStance::Tank) | Some(RoleStance::Heal)) =>
+            {
+                arc_opt.map(|a| (a.streak, a.commit.in_lockout))
             }
-            StreakCounterKind::DpsPrimary => {
-                let show = stance == Some(RoleStance::Dps);
-                let (s, l) = if show {
-                    (arc_opt.map(|a| a.streak), arc_opt.map(|a| a.in_lockout))
-                } else {
-                    (None, None)
-                };
-                (show && s.is_some(), s, l)
+            StreakCounterKind::DpsPrimary if stance == Some(RoleStance::Dps) => {
+                arc_opt.map(|a| (a.streak, a.commit.in_lockout))
             }
-            StreakCounterKind::DpsSecondary => {
-                let show = stance == Some(RoleStance::Dps);
-                let (s, l) = if show {
-                    (
-                        secondary_opt.map(|s| s.0.streak),
-                        secondary_opt.map(|s| s.0.in_lockout),
-                    )
-                } else {
-                    (None, None)
-                };
-                (show && s.is_some(), s, l)
+            StreakCounterKind::DpsSecondary if stance == Some(RoleStance::Dps) => {
+                secondary_opt.map(|s| (s.0.streak, s.0.commit.in_lockout))
             }
+            _ => None,
+        };
+        let (stance_match, streak_opt, lockout_opt) = match arc_for_kind {
+            Some((s, l)) => (true, Some(s), Some(l)),
+            None => (false, None, None),
         };
 
         if !stance_match {

@@ -73,10 +73,11 @@ pub struct RequestInstanceMsg {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// DEV-ONLY — REMOVE BEFORE SHIP
+// DEV-ONLY (debug builds only)
 // Keys 4/5/6 on the client send this to apply a DoT of the chosen type to the
-// player's currently selected mob. Grep for `DEV-ONLY` to find all call sites.
+// player's currently selected mob. Gated out of release builds via cfg.
 // ═════════════════════════════════════════════════════════════════════════════
+#[cfg(debug_assertions)]
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DevApplyDotMsg {
     pub ty: DamageType,

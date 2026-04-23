@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
-
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use super::commit_tracker::CommitTracker;
 
 /// Streak count at which the Tank/Heal cube activates.  Tuned shorter than the
 /// grid cap so cube cycles feel tight and the per-activation payout is small.
@@ -11,9 +11,9 @@ pub const CUBE_CRITICAL_MASS_CAP: u32 = 2;
 /// streak break). Larger than the cube cap so the step budget is meaningful.
 pub const GRID_CRITICAL_MASS_CAP: u32 = 10;
 
-/// Capacity of `ArcState::recent_commit_qualities`. Sized to the grid cap so
-/// per-step magnitude lookups always have data; the cube reads the aggregate
-/// mean and is unaffected by the extra tail entries.
+/// Capacity of the commit-quality history. Sized to the grid cap so per-step
+/// magnitude lookups always have data; the cube reads the aggregate mean and
+/// is unaffected by the extra tail entries.
 pub const QUALITY_HISTORY_CAPACITY: u32 = GRID_CRITICAL_MASS_CAP;
 
 /// Server-authoritative state for the Physical class Arc mechanic.
@@ -47,11 +47,12 @@ pub struct ArcState {
     pub disruption_velocity: f32,
 
     // ── Commit state ─────────────────────────────────────────────────────────
-    /// True between a commit and the moment the dot reaches the opposite apex.
-    /// At most one commit per half-oscillation.
-    pub in_lockout: bool,
-    /// Quality [0, 1] of the most recent commit, derived from dot velocity at commit time.
-    pub last_commit_quality: f32,
+    /// Lockout flag, last commit quality, and recent-quality ring buffer.
+    /// Cube reads `commit.mean()` at activation to gate bonus tier; grid reads
+    /// per-step magnitudes from `commit.history`. The lockout is held between
+    /// a commit and the moment the dot reaches the opposite apex (one commit
+    /// per half-oscillation).
+    pub commit: CommitTracker,
     /// Theta at the moment of the most recent commit. Set server-side; read by the
     /// client to push accurate ghost history entries.
     pub last_commit_theta: f32,
@@ -73,10 +74,6 @@ pub struct ArcState {
     /// Previous tick's at-apex state — drives rising-edge detection for
     /// `apex_visits_since_commit`.
     pub prev_at_apex: bool,
-    /// Ring buffer of the last `CRITICAL_MASS_CAP` commit qualities (newest at front).
-    /// Cube reads the aggregate mean at activation to gate bonus tier; grid reads
-    /// per-step magnitudes when traversing.
-    pub recent_commit_qualities: VecDeque<f32>,
 }
 
 /// Second independent arc for Physical DPS stance (one per weapon).
@@ -94,14 +91,12 @@ impl Default for ArcState {
             time: 0.0,
             theta: std::f32::consts::FRAC_PI_2,
             disruption_velocity: 0.0,
-            in_lockout: false,
-            last_commit_quality: 0.0,
+            commit: CommitTracker::with_capacity(QUALITY_HISTORY_CAPACITY as usize),
             last_commit_theta: std::f32::consts::FRAC_PI_2,
             streak: 0,
             streak_at_last_activation: 0,
             apex_visits_since_commit: 0,
             prev_at_apex: false,
-            recent_commit_qualities: VecDeque::with_capacity(QUALITY_HISTORY_CAPACITY as usize),
         }
     }
 }

@@ -9,6 +9,7 @@ use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
 use super::frames::{CHAR_OFFSET, FRAME_H, FRAME_TOP_PCT, FRAME_W};
+use super::health_bar;
 
 const MAX_BARS: usize = 5;
 const BAR_ROW_H: f32 = 13.0;
@@ -145,26 +146,10 @@ pub fn spawn_target_panel(mut commands: Commands) {
                             TextFont { font_size: 9.5, ..default() },
                             TextColor(Color::srgb(0.80, 0.80, 0.80)),
                         ));
-                        col.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Px(5.0),
-                                overflow: Overflow::clip(),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgba(0.15, 0.05, 0.05, 0.8)),
-                        ))
-                        .with_children(|bar| {
-                            bar.spawn((
-                                TotHealthFill,
-                                Node {
-                                    width: Val::Percent(100.0),
-                                    height: Val::Percent(100.0),
-                                    ..default()
-                                },
-                                BackgroundColor(theme::HEALTH_FILL),
-                            ));
-                        });
+                        col.spawn(health_bar::bar_bundle(5.0))
+                            .with_children(|bar| {
+                                bar.spawn((TotHealthFill, health_bar::fill_bundle()));
+                            });
                     });
                 });
 
@@ -261,9 +246,7 @@ pub fn compute_threat_display(
                 if let Some((entity, _, name, health_opt)) = player_q.iter()
                     .find(|(_, pid, _, _)| pid.0 == play_id)
                 {
-                    let hp = health_opt
-                        .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
-                        .unwrap_or(100.0);
+                    let hp = health_opt.map(health_bar::percent).unwrap_or(100.0);
                     let color = avatar_color_for(entity, &own_entity, &remote_marker_q);
                     data.tot_entity = Some(entity);
                     Some(TotDisplay { name: name.0.clone(), health_pct: hp, avatar_color: color })
@@ -280,9 +263,7 @@ pub fn compute_threat_display(
                 Some(SelectedMobOrPlayer::Mob(mob_entity)) => {
                     // ToT is an enemy mob — show name, health, and threat bars.
                     let Ok((mob_name, health_opt, tl_opt, _)) = mob_q.get(*mob_entity) else { return };
-                    let hp = health_opt
-                        .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
-                        .unwrap_or(100.0);
+                    let hp = health_opt.map(health_bar::percent).unwrap_or(100.0);
                     let e = tl_opt.map(|tl| tl.entries.clone()).unwrap_or_default();
                     data.tot_entity = Some(*mob_entity);
                     (e, Some(TotDisplay { name: mob_name.0.clone(), health_pct: hp, avatar_color: theme::AVATAR_ENEMY }))
@@ -292,9 +273,7 @@ pub fn compute_threat_display(
                     let found = player_q.iter()
                         .find(|(_, pid, _, _)| pid.0 == *play_id);
                     let Some((entity, _, name, health_opt)) = found else { return };
-                    let hp = health_opt
-                        .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
-                        .unwrap_or(100.0);
+                    let hp = health_opt.map(health_bar::percent).unwrap_or(100.0);
                     let color = avatar_color_for(entity, &own_entity, &remote_marker_q);
                     data.tot_entity = Some(entity);
                     (vec![], Some(TotDisplay { name: name.0.clone(), health_pct: hp, avatar_color: color }))

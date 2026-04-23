@@ -1,5 +1,6 @@
 pub mod arc;
 pub mod bar_fill;
+pub mod commit_tracker;
 pub mod cube;
 pub mod heartbeat;
 pub mod value_lock;

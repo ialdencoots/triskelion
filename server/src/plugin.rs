@@ -4,7 +4,9 @@ use lightyear::prelude::server::*;
 
 use shared::settings;
 
-use crate::systems::{combat, connection, dev_dots, enemy, instances::InstanceRegistry, instances, minigame};
+use crate::systems::{combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
+#[cfg(debug_assertions)]
+use crate::systems::dev_dots;
 
 pub struct ServerGamePlugin;
 
@@ -39,8 +41,6 @@ impl Plugin for ServerGamePlugin {
                 enemy::tick_enemy_walk,
                 (
                     combat::process_player_inputs,
-                    // DEV-ONLY — REMOVE: attaches DoTs on 4/5/6 keypresses.
-                    dev_dots::process_dev_dot_requests,
                     combat::tick_dots,
                     combat::apply_damage_events,
                 ).chain(),
@@ -58,6 +58,17 @@ impl Plugin for ServerGamePlugin {
                 minigame::tick_value_lock_states,
                 minigame::tick_heartbeat_states,
             ),
+        );
+
+        // DEV-ONLY (debug builds only): consume DevApplyDotMsg from clients and
+        // attach a typed DoT. Must run between input processing (which sets
+        // selection) and tick_dots (which consumes attached DoTs).
+        #[cfg(debug_assertions)]
+        app.add_systems(
+            FixedUpdate,
+            dev_dots::process_dev_dot_requests
+                .after(combat::process_player_inputs)
+                .before(combat::tick_dots),
         );
     }
 }

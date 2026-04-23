@@ -8,6 +8,8 @@ use crate::ui::theme;
 use crate::world::players::{OwnServerEntity, RemotePlayerMarker};
 use crate::world::selection::SelectedTarget;
 
+use super::health_bar;
+
 pub const FRAME_W: f32 = 220.0;
 pub const FRAME_H: f32 = 56.0;
 const AVATAR_SIZE: f32 = 48.0;
@@ -119,29 +121,13 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
                 text_cmd.insert(PlayerNameText);
             }
 
-            col.spawn((
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Px(10.0),
-                    overflow: Overflow::clip(),
-                    ..default()
-                },
-                BackgroundColor(theme::HEALTH_BAR_BG),
-            ))
-            .with_children(|bar| {
-                let mut fill_cmd = bar.spawn((
-                    HealthFill,
-                    Node {
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        ..default()
-                    },
-                    BackgroundColor(theme::HEALTH_FILL),
-                ));
-                if is_target {
-                    fill_cmd.insert(TargetHealthFill);
-                }
-            });
+            col.spawn(health_bar::bar_bundle(10.0))
+                .with_children(|bar| {
+                    let mut fill_cmd = bar.spawn((HealthFill, health_bar::fill_bundle()));
+                    if is_target {
+                        fill_cmd.insert(TargetHealthFill);
+                    }
+                });
         });
 }
 
@@ -230,10 +216,7 @@ pub fn update_target_health_fill(
     let Ok(mut node) = fill_query.single_mut() else { return };
 
     let pct = match selected.0 {
-        Some(e) => health_query
-            .get(e)
-            .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
-            .unwrap_or(100.0),
+        Some(e) => health_query.get(e).map(health_bar::percent).unwrap_or(100.0),
         None => 100.0,
     };
 

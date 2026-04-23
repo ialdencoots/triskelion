@@ -64,9 +64,15 @@ impl Plugin for ClientGamePlugin {
             (
                 input::gather_and_send_input,
                 input::send_target_selection,
-                // DEV-ONLY — REMOVE: keys 4/5/6 apply typed DoTs for testing.
-                crate::systems::dev_dots::send_dev_dot_requests,
             )
+                .run_if(in_state(AppState::InGame)),
+        );
+
+        // DEV-ONLY (debug builds only): keys 4/5/6 apply typed DoTs for testing.
+        #[cfg(debug_assertions)]
+        app.add_systems(
+            Update,
+            crate::systems::dev_dots::send_dev_dot_requests
                 .run_if(in_state(AppState::InGame)),
         );
 

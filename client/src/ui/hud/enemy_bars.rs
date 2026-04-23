@@ -6,9 +6,15 @@ use shared::components::enemy::EnemyMarker;
 use crate::world::camera::OrbitCamera;
 use crate::world::terrain::PlayerMarker;
 
+use super::health_bar;
+
 const BAR_W: f32 = 56.0;
 const BAR_H: f32 = 7.0;
 const HEALTH_BAR_RANGE: f32 = 30.0;
+/// Floating world-space bar uses deeper colors than panel bars to read
+/// against arbitrary terrain. Kept off-theme intentionally.
+const ENEMY_BAR_BG: Color = Color::srgba(0.25, 0.04, 0.04, 0.9);
+const ENEMY_BAR_FILL: Color = Color::srgb(0.15, 0.70, 0.15);
 
 /// Marks the root UI node of a floating enemy health bar.
 #[derive(Component)]
@@ -17,6 +23,24 @@ pub struct EnemyHealthBarRoot(pub Entity);
 /// Marks the fill child of an enemy health bar, linking it back to the enemy entity.
 #[derive(Component)]
 pub struct EnemyHealthBarFill(pub Entity);
+
+/// Observer: despawns the floating bar when its enemy entity is removed.
+/// Fires when the enemy dies (server despawn replicated to client) or when
+/// the local player switches instance (Lightyear stops replicating the
+/// out-of-target entity). Without this, bars accumulate as orphans.
+pub fn on_enemy_bar_removed(
+    trigger: On<Remove, EnemyMarker>,
+    bars: Query<(Entity, &EnemyHealthBarRoot)>,
+    mut commands: Commands,
+) {
+    let enemy = trigger.event_target();
+    for (bar_entity, bar) in bars.iter() {
+        if bar.0 == enemy {
+            commands.entity(bar_entity).despawn();
+            break;
+        }
+    }
+}
 
 /// Observer: spawns a floating health bar UI node when an enemy is replicated.
 pub fn on_enemy_bar_added(trigger: On<Add, EnemyMarker>, mut commands: Commands) {
@@ -33,18 +57,13 @@ pub fn on_enemy_bar_added(trigger: On<Add, EnemyMarker>, mut commands: Commands)
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.25, 0.04, 0.04, 0.9)),
+            BackgroundColor(ENEMY_BAR_BG),
             Visibility::Hidden,
         ))
         .with_children(|bar| {
             bar.spawn((
                 EnemyHealthBarFill(enemy),
-                Node {
-                    width: Val::Percent(100.0),
-                    height: Val::Percent(100.0),
-                    ..default()
-                },
-                BackgroundColor(Color::srgb(0.15, 0.70, 0.15)),
+                health_bar::fill_bundle_styled(ENEMY_BAR_FILL),
             ));
         });
 }
@@ -95,7 +114,7 @@ pub fn update_enemy_bars(
             .get(enemy)
             .ok()
             .and_then(|(_, h)| h)
-            .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
+            .map(health_bar::percent)
             .unwrap_or(100.0);
         fill_node.width = Val::Percent(pct);
     }

@@ -9,6 +9,7 @@ pub mod damage_numbers;
 pub mod enemy_bars;
 pub mod frames;
 pub mod group_frame;
+pub mod health_bar;
 pub mod instance_button;
 pub mod minigame_anchor;
 pub mod selection_indicator;
@@ -40,6 +41,7 @@ impl Plugin for HudPlugin {
             ),
         );
         app.add_observer(enemy_bars::on_enemy_bar_added);
+        app.add_observer(enemy_bars::on_enemy_bar_removed);
         app.add_observer(crate::ui::arc::on_arc_state_added);
         app.add_observer(crate::ui::arc::on_secondary_arc_state_added);
         app.add_observer(group_frame::on_party_member_added);

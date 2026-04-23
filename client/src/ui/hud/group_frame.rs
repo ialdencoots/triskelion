@@ -8,6 +8,8 @@ use crate::plugin::LocalClientId;
 use crate::ui::theme;
 use crate::world::selection::SelectedTarget;
 
+use super::health_bar;
+
 const PANEL_W: f32 = 180.0;
 const ROW_H: f32 = 44.0;
 const AVATAR_SIZE: f32 = 36.0;
@@ -80,27 +82,11 @@ fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) 
     let avatar_tint = if is_self { theme::AVATAR_SELF } else { theme::AVATAR_PARTY };
 
     let fill = commands
-        .spawn((
-            PartyHealthFill(game_entity),
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
-            BackgroundColor(theme::HEALTH_FILL),
-        ))
+        .spawn((PartyHealthFill(game_entity), health_bar::fill_bundle()))
         .id();
 
     let bar_bg = commands
-        .spawn((
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Px(8.0),
-                overflow: Overflow::clip(),
-                ..default()
-            },
-            BackgroundColor(theme::HEALTH_BAR_BG),
-        ))
+        .spawn(health_bar::bar_bundle(8.0))
         .add_child(fill)
         .id();
 
@@ -219,7 +205,7 @@ pub fn update_party_rows(
     for (PartyHealthFill(game_entity), mut node) in fill_q.iter_mut() {
         let pct = health_q
             .get(*game_entity)
-            .map(|h| (h.current / h.max * 100.0).clamp(0.0, 100.0))
+            .map(health_bar::percent)
             .unwrap_or(100.0);
         node.width = Val::Percent(pct);
     }

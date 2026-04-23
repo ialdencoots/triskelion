@@ -372,7 +372,7 @@ pub fn render_arc(
         // Primary commit detection — push to ghost trail and central history.
         tick_ghost_history(
             &mut ghost,
-            arc.in_lockout,
+            arc.commit.in_lockout,
             arc.last_commit_theta,
             arc.amplitude,
             true,
@@ -442,7 +442,7 @@ pub fn render_arc(
                     if let Some(ref mut sec_ghost) = sec_ghost_opt {
                         tick_ghost_history(
                             &mut sec_ghost.0,
-                            secondary.0.in_lockout,
+                            secondary.0.commit.in_lockout,
                             secondary.0.last_commit_theta,
                             secondary.0.amplitude,
                             false,
@@ -563,7 +563,7 @@ fn arc_to_params(arc: &ArcState, ghost: &GhostArcHistory, w: f32, h: f32, t: f32
         core: Vec4::new(
             arc.theta,
             arc.amplitude,
-            if arc.in_lockout { 1.0 } else { 0.0 },
+            if arc.commit.in_lockout { 1.0 } else { 0.0 },
             ghost_count,
         ),
         ghost_a: Vec4::new(g(0), g(1), g(2), g(3)),

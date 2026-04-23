@@ -32,7 +32,7 @@ fn tick_arc(arc: &mut ArcState, dt: f32) {
     let apex_proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
     let at_apex = apex_proximity >= 0.9;
     if at_apex && !arc.prev_at_apex {
-        arc.in_lockout = false;
+        arc.commit.in_lockout = false;
         arc.apex_visits_since_commit = arc.apex_visits_since_commit.saturating_add(1);
         if arc.apex_visits_since_commit >= 2 && arc.streak > 0 {
             arc.streak = 0;
@@ -44,20 +44,15 @@ fn tick_arc(arc: &mut ArcState, dt: f32) {
 
 /// Evaluate a commit attempt on an arc. No-ops if in lockout.
 pub fn process_arc_commit(arc: &mut ArcState) {
-    if arc.in_lockout {
+    if arc.commit.in_lockout {
         return;
     }
     let dot_vel = arc.amplitude * arc.omega * (arc.omega * arc.time + arc.phase).cos()
         + arc.disruption_velocity;
     let peak_vel = arc.amplitude * arc.omega;
-    arc.last_commit_quality = (dot_vel.abs() / peak_vel).min(1.0);
+    let quality = (dot_vel.abs() / peak_vel).min(1.0);
+    arc.commit.push(quality, QUALITY_HISTORY_CAPACITY as usize);
     arc.last_commit_theta = arc.theta;
-
-    // Push quality into the ring buffer (newest at front, capped by QUALITY_HISTORY_CAPACITY).
-    arc.recent_commit_qualities.push_front(arc.last_commit_quality);
-    if arc.recent_commit_qualities.len() > QUALITY_HISTORY_CAPACITY as usize {
-        arc.recent_commit_qualities.pop_back();
-    }
 
     let proximity = (arc.theta - FRAC_PI_2).abs() / arc.amplitude;
     if proximity < 0.2 {
@@ -71,7 +66,7 @@ pub fn process_arc_commit(arc: &mut ArcState) {
     // Any commit (any zone) resets the idle-break counter — the streak only
     // breaks from apex visits that pass with no commit at all.
     arc.apex_visits_since_commit = 0;
-    arc.in_lockout = true;
+    arc.commit.in_lockout = true;
 }
 
 /// Advance all active Arc states by one server tick.
@@ -91,15 +86,6 @@ pub fn tick_secondary_arc_states(time: Res<Time>, mut query: Query<&mut Secondar
 }
 
 // ── Cube ─────────────────────────────────────────────────────────────────────
-
-/// Mean of the quality buffer, clamped to [0, 1]. Returns 0 if empty.
-fn aggregate_quality(arc: &ArcState) -> f32 {
-    if arc.recent_commit_qualities.is_empty() {
-        return 0.0;
-    }
-    let sum: f32 = arc.recent_commit_qualities.iter().sum();
-    (sum / arc.recent_commit_qualities.len() as f32).clamp(0.0, 1.0)
-}
 
 /// Seed one edge's bonus drawn from a tier-appropriate pool. Skill tree weighting
 /// is deferred; this picks uniformly within the tier band.
@@ -150,7 +136,7 @@ fn seed_face(activation_quality: f32) -> [Option<PhysicalBonus>; 3] {
 /// Open the cube: freeze aggregate quality, seed a fresh face, reset fill.
 /// Assumes the caller has already verified the streak cap and role gate.
 pub fn activate_cube(cube: &mut CubeState, arc: &mut ArcState) {
-    let q = aggregate_quality(arc);
+    let q = arc.commit.mean();
     cube.active = true;
     cube.activation_quality = q;
     cube.fill_progress = 0.0;

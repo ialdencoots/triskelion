@@ -149,13 +149,13 @@ pub fn process_player_inputs(
                     arc.streak = 0;
                     arc.streak_at_last_activation = 0;
                     arc.apex_visits_since_commit = 0;
-                    arc.recent_commit_qualities.clear();
+                    arc.commit.history.clear();
                 }
                 if let Some(ref mut secondary) = secondary_arc_opt {
                     secondary.0.streak = 0;
                     secondary.0.streak_at_last_activation = 0;
                     secondary.0.apex_visits_since_commit = 0;
-                    secondary.0.recent_commit_qualities.clear();
+                    secondary.0.commit.history.clear();
                 }
                 if let Some(ref mut cube) = cube_opt {
                     if cube.active {
@@ -171,13 +171,13 @@ pub fn process_player_inputs(
             }
             if input.minigame.action_1 && combat.active_stance.is_some() {
                 if let Some(ref mut arc) = arc_opt {
-                    let was_unlocked = !arc.in_lockout;
+                    let was_unlocked = !arc.commit.in_lockout;
                     info!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
-                        arc.last_commit_quality, input.facing_yaw);
+                        arc.commit.last_quality, input.facing_yaw);
                     process_arc_commit(arc);
                     if was_unlocked {
                         emit_arc_damage(
-                            arc.last_commit_quality,
+                            arc.commit.last_quality,
                             input.facing_yaw,
                             link.0,
                             &pos,
@@ -190,11 +190,11 @@ pub fn process_player_inputs(
             }
             if input.minigame.action_2 && combat.active_stance == Some(RoleStance::Dps) {
                 if let Some(ref mut secondary) = secondary_arc_opt {
-                    let was_unlocked = !secondary.0.in_lockout;
+                    let was_unlocked = !secondary.0.commit.in_lockout;
                     process_arc_commit(&mut secondary.0);
                     if was_unlocked {
                         emit_arc_damage(
-                            secondary.0.last_commit_quality,
+                            secondary.0.commit.last_quality,
                             input.facing_yaw,
                             link.0,
                             &pos,

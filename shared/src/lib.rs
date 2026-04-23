@@ -30,7 +30,9 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{DamageNumberMsg, DevApplyDotMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        use messages::{DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        #[cfg(debug_assertions)]
+        use messages::DevApplyDotMsg;
 
         // ── Channels ──────────────────────────────────────────────────────────
         app.add_channel::<GameChannel>(ChannelSettings {
@@ -57,7 +59,8 @@ impl Plugin for SharedPlugin {
         app.register_message::<RequestInstanceMsg>()
             .add_direction(NetworkDirection::ClientToServer);
 
-        // DEV-ONLY — REMOVE: keys 4/5/6 trigger a typed DoT on the selected mob.
+        // DEV-ONLY (debug builds only): keys 4/5/6 trigger a typed DoT on the selected mob.
+        #[cfg(debug_assertions)]
         app.register_message::<DevApplyDotMsg>()
             .add_direction(NetworkDirection::ClientToServer);
 
