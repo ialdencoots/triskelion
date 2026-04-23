@@ -14,7 +14,7 @@ use shared::components::player::{
 use shared::channels::GameChannel;
 use shared::events::combat::DamageEvent;
 use shared::inputs::PlayerInput;
-use shared::instances::{find_def, sample_height};
+use shared::instances::{find_def, terrain_surface_y};
 use shared::messages::{DamageNumberMsg, SelectTargetMsg};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
@@ -256,7 +256,7 @@ pub fn process_player_inputs(
             let floor_y = if let Some(iid) = iid_opt {
                 if let Some(live) = reg.instances.get(&iid.0) {
                     let def = find_def(live.kind);
-                    sample_height(&live.noise, pos.x, pos.z, &def.terrain) + PLAYER_FLOAT_HEIGHT
+                    terrain_surface_y(&live.noise, pos.x, pos.z, def) + PLAYER_FLOAT_HEIGHT
                 } else {
                     pos.y
                 }

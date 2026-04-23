@@ -2,34 +2,18 @@ use avian3d::prelude::{Collider, Position, Sensor};
 use bevy::prelude::*;
 
 use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
-use shared::instances::sample_height;
+use shared::instances::{find_def, terrain_surface_y};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::instance::CurrentInstanceTerrain;
 use super::terrain::PlayerMarker;
-use super::DEAD_RECKONING_MAX_EXTRAP_SECS;
+use super::DeadReckoning;
 
 use crate::plugin::LocalClientId;
 
 /// Marks a client-side entity that renders a remote (non-local) player.
 #[derive(Component)]
 pub struct RemotePlayerMarker;
-
-/// Client-only dead-reckoning state for remote players.
-/// Identical in purpose and structure to `EnemyDeadReckoning`; kept separate
-/// so queries can distinguish enemies from players unambiguously.
-#[derive(Component)]
-pub struct PlayerDeadReckoning {
-    /// Authoritative position at the time of the last server update.
-    pub base_pos: Vec3,
-    /// XZ velocity received from the server at that same update.
-    pub vel: Vec2,
-    /// Vertical velocity received from the server; used to extrapolate Y between
-    /// updates so jumps appear smooth rather than stepping every 100 ms.
-    pub vel_y: f32,
-    /// `Time::elapsed_secs()` (client wall clock) when the update was applied.
-    pub base_time: f32,
-}
 
 /// The server-replicated entity that corresponds to our own local player.
 /// Set once in `on_remote_player_replicated` when `PlayerId` matches our client ID.
@@ -73,7 +57,7 @@ pub fn on_remote_player_replicated(
             ..default()
         })),
         Transform::from_translation(translation),
-        PlayerDeadReckoning { base_pos: translation, vel, vel_y, base_time: time.elapsed_secs() },
+        DeadReckoning { base_pos: translation, vel, vel_y, base_time: time.elapsed_secs() },
         // Sensor: intangible for physics but still hittable by raycasts (click selection).
         Collider::capsule(0.4, 1.0),
         Sensor,
@@ -90,7 +74,7 @@ pub fn on_remote_player_replicated(
 pub fn apply_player_corrections(
     time: Res<Time>,
     mut query: Query<
-        (&PlayerPosition, &PlayerVelocity, &mut PlayerDeadReckoning),
+        (&PlayerPosition, &PlayerVelocity, &mut DeadReckoning),
         (Changed<PlayerPosition>, With<RemotePlayerMarker>),
     >,
 ) {
@@ -108,18 +92,15 @@ pub fn apply_player_corrections(
 pub fn sync_player_positions(
     time: Res<Time>,
     terrain: Res<CurrentInstanceTerrain>,
-    mut query: Query<(&PlayerDeadReckoning, &mut Transform), With<RemotePlayerMarker>>,
+    mut query: Query<(&DeadReckoning, &mut Transform), With<RemotePlayerMarker>>,
 ) {
     let t = time.elapsed_secs();
     let frame_dt = time.delta_secs();
+    let def = find_def(terrain.kind);
     for (dr, mut tf) in query.iter_mut() {
-        let dt = (t - dr.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS);
-        let target_x = dr.base_pos.x + dr.vel.x * dt;
-        let target_z = dr.base_pos.z + dr.vel.y * dt;
-        let extrap_y = dr.base_pos.y + dr.vel_y * dt;
-        let floor_y = sample_height(&terrain.noise, target_x, target_z, &terrain.cfg) + PLAYER_FLOAT_HEIGHT;
-        let target_y = extrap_y.max(floor_y);
-        let target = Vec3::new(target_x, target_y, target_z);
+        let extrap = dr.extrapolated_at(t);
+        let floor_y = terrain_surface_y(&terrain.noise, extrap.x, extrap.z, def) + PLAYER_FLOAT_HEIGHT;
+        let target = Vec3::new(extrap.x, extrap.y.max(floor_y), extrap.z);
 
         // Smooth-chase the extrapolated target each frame rather than snapping.
         // At 60 fps this converges to within 2 cm in ~8 frames (~130 ms).
@@ -150,7 +131,8 @@ pub fn correct_local_player_position(
         return;
     }
 
-    let floor_y = sample_height(&terrain.noise, server_pos.x, server_pos.z, &terrain.cfg) + PLAYER_FLOAT_HEIGHT;
+    let def = find_def(terrain.kind);
+    let floor_y = terrain_surface_y(&terrain.noise, server_pos.x, server_pos.z, def) + PLAYER_FLOAT_HEIGHT;
     avian_pos.0.x = server_pos.x;
     avian_pos.0.z = server_pos.z;
     avian_pos.0.y = server_pos.y.max(floor_y);

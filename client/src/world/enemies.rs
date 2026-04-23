@@ -2,27 +2,11 @@ use avian3d::prelude::{Collider, Sensor};
 use bevy::prelude::*;
 
 use shared::components::enemy::{BossMarker, EnemyMarker, EnemyPosition, EnemyVelocity};
-use shared::instances::sample_height;
+use shared::instances::{find_def, terrain_surface_y};
 use shared::settings::{BOSS_FLOAT_HEIGHT, PLAYER_FLOAT_HEIGHT};
 
 use super::instance::CurrentInstanceTerrain;
-use super::DEAD_RECKONING_MAX_EXTRAP_SECS;
-
-/// Client-only dead-reckoning state.  Not replicated.
-///
-/// When a server position update arrives, we record the authoritative position,
-/// the current velocity, and the local wall-clock time.  Each frame we
-/// extrapolate `base_pos + vel * dt` instead of snapping to the latest
-/// received position, producing smooth 60+ Hz motion between ~10 Hz updates.
-#[derive(Component)]
-pub struct EnemyDeadReckoning {
-    /// Authoritative position at the time of the last server update.
-    pub base_pos: Vec3,
-    /// XZ velocity received from the server at that same update.
-    pub vel: Vec2,
-    /// `Time::elapsed_secs()` (client wall clock) when the update was applied.
-    pub base_time: f32,
-}
+use super::DeadReckoning;
 
 /// Fires when the server replicates an enemy entity to this client.
 /// Inserts the local rendering components (mesh + material + transform).
@@ -72,7 +56,7 @@ pub fn on_enemy_replicated(
             ..default()
         })),
         Transform::from_translation(translation),
-        EnemyDeadReckoning { base_pos: translation, vel, base_time: time.elapsed_secs() },
+        DeadReckoning { base_pos: translation, vel, vel_y: 0.0, base_time: time.elapsed_secs() },
         // Collider required for SpatialQuery::cast_ray click selection.
         // Sensor makes the capsule intangible (no collision response) while
         // still being hittable by raycasts.
@@ -97,7 +81,7 @@ pub fn on_enemy_position_replicated(trigger: On<Add, EnemyPosition>) {
 /// this frame — usually just 0–3 enemies.
 pub fn apply_server_corrections(
     time: Res<Time>,
-    mut query: Query<(&EnemyPosition, &EnemyVelocity, &mut EnemyDeadReckoning), Changed<EnemyPosition>>,
+    mut query: Query<(&EnemyPosition, &EnemyVelocity, &mut DeadReckoning), (With<EnemyMarker>, Changed<EnemyPosition>)>,
 ) {
     for (pos, vel, mut dr) in query.iter_mut() {
         dr.base_pos = pos.to_vec3();
@@ -114,7 +98,7 @@ pub fn apply_server_corrections(
 pub fn sync_enemy_positions(
     time: Res<Time>,
     terrain: Res<CurrentInstanceTerrain>,
-    mut query: Query<(&EnemyDeadReckoning, Option<&BossMarker>, &mut Transform), With<EnemyMarker>>,
+    mut query: Query<(&DeadReckoning, Option<&BossMarker>, &mut Transform), With<EnemyMarker>>,
 ) {
     // Log enemy count every 5 seconds.
     let t = time.elapsed_secs();
@@ -126,12 +110,11 @@ pub fn sync_enemy_positions(
         info!("[CLIENT] sync_enemy_positions: {count} enemies tracked at t={t:.1}s");
     }
 
+    let def = find_def(terrain.kind);
     for (dr, boss, mut tf) in query.iter_mut() {
-        let extrap_dt = (t - dr.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS);
-        let new_x = dr.base_pos.x + dr.vel.x * extrap_dt;
-        let new_z = dr.base_pos.z + dr.vel.y * extrap_dt;
+        let extrap = dr.extrapolated_at(t);
         let floor_offset = if boss.is_some() { BOSS_FLOAT_HEIGHT } else { PLAYER_FLOAT_HEIGHT };
-        let new_y = sample_height(&terrain.noise, new_x, new_z, &terrain.cfg) + floor_offset;
-        tf.translation = Vec3::new(new_x, new_y, new_z);
+        let new_y = terrain_surface_y(&terrain.noise, extrap.x, extrap.z, def) + floor_offset;
+        tf.translation = Vec3::new(extrap.x, new_y, extrap.z);
     }
 }

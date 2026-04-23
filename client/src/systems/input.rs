@@ -8,7 +8,7 @@ use shared::components::player::{PlayerId, RoleStance, SelectedMobOrPlayer};
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
 
 use super::keybindings::{ActionBarBindings, ActionSlot};
-use shared::instances::sample_height;
+use shared::instances::{find_def, terrain_surface_y};
 use shared::messages::SelectTargetMsg;
 use shared::settings::{AIRBORNE_HEIGHT_THRESHOLD, AIRBORNE_VY_THRESHOLD, PLAYER_FLOAT_HEIGHT};
 
@@ -85,10 +85,11 @@ pub fn gather_and_send_input(
     //   • |vy| > AIRBORNE_VY_THRESHOLD — catches takeoff (vy ≈ +5.4) and landing (vy < 0)
     //   • height_above > AIRBORNE_HEIGHT_THRESHOLD — catches the jump apex where vy ≈ 0
     // When grounded, we send the canonical terrain + PLAYER_FLOAT_HEIGHT with vy = 0.
+    let def = find_def(terrain.kind);
     let (y, vy, player_yaw) = player_query
         .single()
         .map(|(tf, lv)| {
-            let terrain_y = sample_height(&terrain.noise, tf.translation.x, tf.translation.z, &terrain.cfg);
+            let terrain_y = terrain_surface_y(&terrain.noise, tf.translation.x, tf.translation.z, def);
             let height_above = tf.translation.y - terrain_y;
             let is_airborne =
                 lv.y.abs() > AIRBORNE_VY_THRESHOLD || height_above > AIRBORNE_HEIGHT_THRESHOLD;

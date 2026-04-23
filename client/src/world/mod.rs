@@ -21,6 +21,51 @@ pub use selection::SelectedTarget;
 /// server goes quiet (~10 Hz updates expected).
 pub(crate) const DEAD_RECKONING_MAX_EXTRAP_SECS: f32 = 0.3;
 
+/// Client-only extrapolation baseline for a server-replicated entity.
+///
+/// When a server position/velocity update arrives, the baseline is refreshed
+/// with the authoritative values and the local wall-clock time. Each rendered
+/// frame the caller computes `base_pos + vel * elapsed` to produce a smooth
+/// 60+ Hz visual between ~10 Hz server updates.
+///
+/// Shared by remote players and enemies; `vel_y` is 0 for enemies since the
+/// server doesn't replicate enemy vertical velocity. The correction-application
+/// and per-frame sync systems stay separate because remote players smooth-chase
+/// the target (lerp) while enemies snap to floor-clamped XZ.
+#[derive(Component)]
+pub struct DeadReckoning {
+    /// Authoritative position at the time of the last server update.
+    pub base_pos: Vec3,
+    /// XZ velocity received from the server at that same update.
+    pub vel: Vec2,
+    /// Vertical velocity received from the server; used to extrapolate Y
+    /// between updates so jumps appear smooth rather than stepping per update.
+    /// Stays 0 for entities whose server state has no vertical velocity.
+    pub vel_y: f32,
+    /// `Time::elapsed_secs()` (client wall clock) when the update was applied.
+    pub base_time: f32,
+}
+
+impl DeadReckoning {
+    /// Seconds since the last server update, clamped to the extrapolation budget.
+    #[inline]
+    pub fn elapsed(&self, now: f32) -> f32 {
+        (now - self.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS)
+    }
+
+    /// Extrapolated 3-D position: `base_pos + vel * elapsed`. Y is meaningful
+    /// only for entities whose server state replicates `vel_y` (remote players).
+    #[inline]
+    pub fn extrapolated_at(&self, now: f32) -> Vec3 {
+        let dt = self.elapsed(now);
+        Vec3::new(
+            self.base_pos.x + self.vel.x * dt,
+            self.base_pos.y + self.vel_y * dt,
+            self.base_pos.z + self.vel.y * dt,
+        )
+    }
+}
+
 #[derive(TnuaScheme)]
 #[scheme(basis = TnuaBuiltinWalk)]
 pub enum ControlScheme {

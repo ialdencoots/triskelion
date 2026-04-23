@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use fastnoise_lite::FastNoiseLite;
 use lightyear::prelude::*;
 
-use shared::instances::{build_noise, find_def, sample_height, InstanceKind, MobKind};
+use shared::instances::{build_noise, find_def, terrain_surface_y, InstanceKind, MobKind};
 
 use super::mob_defs::{floor_offset_for_kind, scatter_offset, spawn_mob};
 
@@ -88,7 +88,7 @@ pub fn populate_instance(instance_id: u32, reg: &mut InstanceRegistry, commands:
                     let (ox, oz) = scatter_offset(node_idx, mob_i, pack.spread);
                     let wx = node.position.0 + ox;
                     let wz = node.position.1 + oz;
-                    let y = sample_height(&live.noise, wx, wz, &def.terrain) + floor_offset_for_kind(mob_spawn.kind);
+                    let y = terrain_surface_y(&live.noise, wx, wz, def) + floor_offset_for_kind(mob_spawn.kind);
                     let phase = (wx * 3.7 + wz * 5.3).abs() % (2.0 * PI);
                     out.push(MobParam { kind: mob_spawn.kind, x: wx, y, z: wz, phase, node_idx });
                     mob_i += 1;

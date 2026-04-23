@@ -23,8 +23,14 @@ use super::terrain::PlayerMarker;
 /// Client-side cached terrain configuration and noise generator.
 /// Initialized from the default config (overworld) at startup.
 /// Rebuilt when `InstanceEnteredMsg` arrives from the server.
+///
+/// `kind` is retained alongside `cfg`/`noise` so callers can resolve the
+/// static `InstanceDef` via `find_def(kind)` and call `terrain_surface_y`
+/// (layout-aware) instead of bare `sample_height` — the latter underplaces
+/// entities by `WALL_HEIGHT` inside layout instances.
 #[derive(Resource)]
 pub struct CurrentInstanceTerrain {
+    pub kind: InstanceKind,
     pub cfg: TerrainConfig,
     pub noise: FastNoiseLite,
 }
@@ -33,7 +39,7 @@ impl Default for CurrentInstanceTerrain {
     fn default() -> Self {
         let cfg = TerrainConfig::default();
         let noise = build_noise(&cfg);
-        Self { cfg, noise }
+        Self { kind: InstanceKind::Overworld, cfg, noise }
     }
 }
 
@@ -90,6 +96,7 @@ pub fn handle_instance_entered(
         }
 
         // Rebuild terrain resource from new config.
+        terrain_res.kind = msg.kind;
         terrain_res.cfg = msg.terrain;
         terrain_res.noise = build_noise(&msg.terrain);
 
