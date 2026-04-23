@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use shared::components::combat::CombatState;
 use shared::components::player::RoleStance;
 
-use crate::systems::keybindings::ActionBarBindings;
+use crate::systems::keybindings::{ActionBarBindings, ActionSlot};
 use crate::world::players::OwnServerEntity;
 
 const SLOT_SIZE: f32 = 64.0;
@@ -11,7 +11,19 @@ const SLOT_GAP: f32 = 6.0;
 const BAR_BOTTOM_PAD: f32 = 18.0;
 
 /// Role/function labels for each slot (displayed at the top of stance slots).
-static SLOT_LABELS: &[&str] = &["Tank", "DPS", "Heal", "Secondary", "Primary", "Cube-L", "Cube-B", "Cube-R"];
+/// Must stay in index-lockstep with `ActionSlot` — empty label renders a blank
+/// slot, which we use for `ActionSlot::SecondaryUp` until the DPS grid ships.
+static SLOT_LABELS: &[&str] = &[
+    "Tank",      // Stance1
+    "DPS",       // Stance2
+    "Heal",      // Stance3
+    "Commit2", // Primary2
+    "Commit",   // Primary1
+    "Left",      // SecondaryLeft
+    "Down",      // SecondaryDown
+    "Right",     // SecondaryRight
+    "Up",        // SecondaryUp
+];
 
 /// Marks the keybind text node for a given slot so it can be updated
 /// when bindings change.
@@ -25,13 +37,13 @@ const DPS_COLOR:  Color = Color::srgb(1.00, 0.40, 0.20); // orange-red
 const HEAL_COLOR: Color = Color::srgb(0.25, 0.90, 0.45); // green
 
 #[derive(Component)]
-pub struct ActionSlot(pub u8);
+pub struct ActionSlotIndex(pub u8);
 
 /// One-frame pulse set by mouse clicks on action-bar slots. `gather_and_send_input`
 /// OR-combines it with the keyboard press for the same slot, so clicks and
 /// keypresses share a single activation path through `PlayerInput`.
 #[derive(Resource, Default)]
-pub struct SlotClickPulse(pub [bool; 8]);
+pub struct SlotClickPulse(pub [bool; ActionSlot::COUNT]);
 
 pub fn spawn_action_bar(mut commands: Commands, bindings: Res<ActionBarBindings>) {
     let num_slots = SLOT_LABELS.len();
@@ -51,7 +63,7 @@ pub fn spawn_action_bar(mut commands: Commands, bindings: Res<ActionBarBindings>
             for (i, label) in SLOT_LABELS.iter().enumerate() {
                 let key_str = keycode_label(bindings.0.get(i).copied());
                 bar.spawn((
-                    ActionSlot(i as u8),
+                    ActionSlotIndex(i as u8),
                     Button,
                     Node {
                         width: Val::Px(SLOT_SIZE),
@@ -157,7 +169,7 @@ fn keycode_label(key: Option<KeyCode>) -> String {
 /// click drives the same `PlayerInput` path as the bound key.
 pub fn handle_action_slot_click(
     mut pulse: ResMut<SlotClickPulse>,
-    interaction_q: Query<(&Interaction, &ActionSlot), (Changed<Interaction>, With<Button>)>,
+    interaction_q: Query<(&Interaction, &ActionSlotIndex), (Changed<Interaction>, With<Button>)>,
 ) {
     for (interaction, slot) in interaction_q.iter() {
         if matches!(interaction, Interaction::Pressed) {
@@ -173,7 +185,7 @@ pub fn handle_action_slot_click(
 pub fn update_stance_highlight(
     own_entity: Option<Res<OwnServerEntity>>,
     combat_q: Query<&CombatState, Changed<CombatState>>,
-    mut slot_q: Query<(&ActionSlot, &mut BackgroundColor, &mut BorderColor)>,
+    mut slot_q: Query<(&ActionSlotIndex, &mut BackgroundColor, &mut BorderColor)>,
 ) {
     // Only proceed when our own CombatState has actually changed.
     let Some(own) = own_entity else { return };

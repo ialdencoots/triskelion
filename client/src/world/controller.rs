@@ -6,6 +6,36 @@ use super::camera::OrbitState;
 use super::terrain::PlayerMarker;
 use super::ControlScheme;
 
+/// Build the normalized XZ move direction from WASD/EDSF + mouse chords.
+///
+/// `fwd_axis` / `right_axis` already encode whose frame movement is relative to
+/// (camera when right-mouse is held, character facing otherwise) — the caller
+/// picks one because Tnua drives rotation from `Transform` while the networked
+/// input path uses the locally cached facing from the previous tick.
+pub fn world_move_dir(
+    keyboard: &ButtonInput<KeyCode>,
+    both_mouse: bool,
+    fwd_axis: Vec3,
+    right_axis: Vec3,
+) -> Vec3 {
+    let dir = if both_mouse {
+        // Auto-forward cancellable by D; S/F strafe.
+        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { fwd_axis };
+        let mut dir = forward;
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
+        dir
+    } else {
+        let mut dir = Vec3::ZERO;
+        if keyboard.pressed(KeyCode::KeyE) { dir += fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyD) { dir -= fwd_axis; }
+        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
+        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
+        dir
+    };
+    if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
+}
+
 pub fn handle_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -31,21 +61,7 @@ pub fn handle_input(
         (player_forward, player_right, player_forward)
     };
 
-    let move_dir = if both_mouse {
-        // Both buttons: auto-forward, D cancels it, S/F strafe.
-        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { fwd_axis };
-        let mut dir = forward;
-        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
-        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
-    } else {
-        let mut dir = Vec3::ZERO;
-        if keyboard.pressed(KeyCode::KeyE) { dir += fwd_axis; }
-        if keyboard.pressed(KeyCode::KeyD) { dir -= fwd_axis; }
-        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
-        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
-    };
+    let move_dir = world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis);
 
     if face_dir.length_squared() > 0.01 {
         let target_yaw = (-face_dir.x).atan2(-face_dir.z);

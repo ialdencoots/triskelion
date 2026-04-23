@@ -17,9 +17,41 @@ use shared::components::player::{
 };
 use shared::instances::{find_def, terrain_surface_y, InstanceKind};
 use shared::messages::{InstanceEnteredMsg, RequestInstanceMsg, RequestSpawnMsg};
+use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::combat::{reset_on_stance_change, ThreatModifiers};
 use super::instances::{create_instance, populate_instance, remove_player_from_instance, InstanceRegistry};
+
+/// Spread spawn positions in a circle of 8 slots so clients don't stack on top
+/// of each other. Any stable hash of `client_id` would do; `% 8` is fine while
+/// instances cap well below 8 clients.
+const SPAWN_SLOTS: u32 = 8;
+const SPAWN_RADIUS: f32 = 3.0;
+
+fn spawn_slot(client_id: u64) -> (f32, f32) {
+    let angle = (client_id as u32 % SPAWN_SLOTS) as f32 * TAU / SPAWN_SLOTS as f32;
+    (angle.cos() * SPAWN_RADIUS, angle.sin() * SPAWN_RADIUS)
+}
+
+/// Single source of truth for "what group does this player belong to?" —
+/// currently hardcoded to 0 until group selection UI exists. Threaded through
+/// `PeerId` so it reads as a lookup rather than a magic constant at call sites.
+fn default_group_id(_peer: PeerId) -> u32 {
+    0
+}
+
+/// Find or create the group's instance of the given kind, returning its id.
+fn ensure_group_instance(
+    kind: InstanceKind,
+    group_id: u32,
+    reg: &mut InstanceRegistry,
+) -> u32 {
+    if let Some(&id) = reg.group_instances.get(&(group_id, kind)) {
+        id
+    } else {
+        create_instance(kind, group_id, reg)
+    }
+}
 
 /// Links a client's network link entity to its spawned player entity and instance.
 #[derive(Component)]
@@ -91,42 +123,16 @@ pub fn process_spawn_requests(
             let PeerId::Netcode(client_id) = remote_id.0 else { continue };
             let peer_id = remote_id.0;
 
-            // Spread spawn positions in a circle so players don't overlap.
-            let angle = (client_id % 8) as f32 * TAU / 8.0;
-            let spawn_x = angle.cos() * 3.0;
-            let spawn_z = angle.sin() * 3.0;
-
-            // Use group 0 for all players until group selection UI is added.
-            let group_id: u32 = 0;
+            let (spawn_x, spawn_z) = spawn_slot(client_id);
+            let group_id = default_group_id(peer_id);
             let kind = InstanceKind::Overworld;
-
-            // Find or create the group's overworld instance.
-            let instance_id = if let Some(&id) = reg.group_instances.get(&(group_id, kind)) {
-                id
-            } else {
-                create_instance(kind, group_id, &mut reg)
-            };
-
+            let instance_id = ensure_group_instance(kind, group_id, &mut reg);
             let def = find_def(kind);
 
             let spawn_y = {
                 let live = reg.instances.get(&instance_id).expect("instance missing");
-                terrain_surface_y(&live.noise, spawn_x, spawn_z, def) + 1.1
+                terrain_surface_y(&live.noise, spawn_x, spawn_z, def) + PLAYER_FLOAT_HEIGHT
             };
-
-            // Add this client to the registry before populating.
-            let needs_population = {
-                let live = reg.instances.get_mut(&instance_id).expect("instance missing");
-                let needs = live.pack_entities.is_empty();
-                live.client_ids.push(peer_id);
-                needs
-            };
-
-            // Populate mobs only when the instance has never been populated;
-            // persisted instances keep their existing mobs across rejoins.
-            if needs_population {
-                populate_instance(instance_id, &mut reg, &mut commands);
-            }
 
             // Use NetworkTarget::All so Lightyear's handle_connection mechanism
             // automatically sends existing entities to each new client as they
@@ -165,9 +171,19 @@ pub fn process_spawn_requests(
                 }
             }
 
-            // Track the player entity in the registry for future joins.
-            reg.instances.get_mut(&instance_id).expect("instance missing")
-                .entities.push(player_entity);
+            // Single mutable borrow: push the new client + the new player entity
+            // and decide whether mobs need spawning. Persisted instances keep
+            // their existing mobs across rejoins, so only populate on first use.
+            let needs_population = {
+                let live = reg.instances.get_mut(&instance_id).expect("instance missing");
+                let needs = live.pack_entities.is_empty();
+                live.client_ids.push(peer_id);
+                live.entities.push(player_entity);
+                needs
+            };
+            if needs_population {
+                populate_instance(instance_id, &mut reg, &mut commands);
+            }
 
             commands.entity(link_entity).insert((
                 PlayerEntityLink(player_entity),
@@ -231,20 +247,12 @@ pub fn process_instance_requests(
             // Remove player from their current instance (tears it down if now empty).
             remove_player_from_instance(old_instance_id, peer_id, player_entity, &mut reg, &mut commands);
 
-            let group_id: u32 = 0;
+            let group_id = default_group_id(peer_id);
             let kind = req.kind;
-
-            // Find or create the group's instance of the requested kind.
-            let new_instance_id = if let Some(&id) = reg.group_instances.get(&(group_id, kind)) {
-                id
-            } else {
-                create_instance(kind, group_id, &mut reg)
-            };
-
+            let new_instance_id = ensure_group_instance(kind, group_id, &mut reg);
             let def = find_def(kind);
 
-            let angle = (client_id % 8) as f32 * std::f32::consts::TAU / 8.0;
-            let (spawn_x, spawn_z) = (angle.cos() * 3.0, angle.sin() * 3.0);
+            let (spawn_x, spawn_z) = spawn_slot(client_id);
 
             // Add this client to the new instance registry.
             let needs_population = {

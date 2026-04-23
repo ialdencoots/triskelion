@@ -7,7 +7,6 @@ pub mod inputs;
 pub mod instances;
 pub mod messages;
 pub mod settings;
-pub mod terrain;
 
 use std::time::Duration;
 

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
 use shared::instances::sample_height;
+use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::instance::CurrentInstanceTerrain;
 use super::terrain::PlayerMarker;
@@ -116,7 +117,7 @@ pub fn sync_player_positions(
         let target_x = dr.base_pos.x + dr.vel.x * dt;
         let target_z = dr.base_pos.z + dr.vel.y * dt;
         let extrap_y = dr.base_pos.y + dr.vel_y * dt;
-        let floor_y = sample_height(&terrain.noise, target_x, target_z, &terrain.cfg) + 1.1;
+        let floor_y = sample_height(&terrain.noise, target_x, target_z, &terrain.cfg) + PLAYER_FLOAT_HEIGHT;
         let target_y = extrap_y.max(floor_y);
         let target = Vec3::new(target_x, target_y, target_z);
 
@@ -149,7 +150,7 @@ pub fn correct_local_player_position(
         return;
     }
 
-    let floor_y = sample_height(&terrain.noise, server_pos.x, server_pos.z, &terrain.cfg) + 1.1;
+    let floor_y = sample_height(&terrain.noise, server_pos.x, server_pos.z, &terrain.cfg) + PLAYER_FLOAT_HEIGHT;
     avian_pos.0.x = server_pos.x;
     avian_pos.0.z = server_pos.z;
     avian_pos.0.y = server_pos.y.max(floor_y);

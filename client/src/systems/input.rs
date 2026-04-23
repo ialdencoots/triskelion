@@ -7,12 +7,14 @@ use shared::components::enemy::EnemyMarker;
 use shared::components::player::{PlayerId, RoleStance, SelectedMobOrPlayer};
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
 
-use super::keybindings::ActionBarBindings;
+use super::keybindings::{ActionBarBindings, ActionSlot};
 use shared::instances::sample_height;
 use shared::messages::SelectTargetMsg;
+use shared::settings::{AIRBORNE_HEIGHT_THRESHOLD, AIRBORNE_VY_THRESHOLD, PLAYER_FLOAT_HEIGHT};
 
 use crate::ui::hud::action_bar::SlotClickPulse;
 use crate::world::camera::OrbitState;
+use crate::world::controller::world_move_dir;
 use crate::world::instance::CurrentInstanceTerrain;
 use crate::world::selection::SelectedTarget;
 use crate::world::terrain::PlayerMarker;
@@ -72,20 +74,7 @@ pub fn gather_and_send_input(
         (player_forward, player_right)
     };
 
-    let move_3d = if both_mouse {
-        let forward = if keyboard.pressed(KeyCode::KeyD) { Vec3::ZERO } else { fwd_axis };
-        let mut dir = forward;
-        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
-        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
-    } else {
-        let mut dir = Vec3::ZERO;
-        if keyboard.pressed(KeyCode::KeyE) { dir += fwd_axis; }
-        if keyboard.pressed(KeyCode::KeyD) { dir -= fwd_axis; }
-        if keyboard.pressed(KeyCode::KeyS) { dir -= right_axis; }
-        if keyboard.pressed(KeyCode::KeyF) { dir += right_axis; }
-        if dir.length_squared() > 0.0 { dir.normalize() } else { Vec3::ZERO }
-    };
+    let move_3d = world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis);
 
     // TnuaController floats the physics capsule at ~1.95 m above the terrain using
     // a spring-damper, which produces small Y oscillations even at rest.  Relaying
@@ -93,21 +82,20 @@ pub fn gather_and_send_input(
     //
     // Fix: only send the actual physics Y when the player is clearly airborne.
     // Detection combines two signals so the full jump arc is captured:
-    //   • |vy| > 1.0 m/s  — catches takeoff (vy ≈ +5.4) and landing (vy negative)
-    //   • height_above > 2.2 m — catches the apex where vy ≈ 0 but we're clearly up
-    // The physics resting height is ~1.95 m above the terrain noise floor, so the
-    // 2.2 m threshold only fires once the player is genuinely above the ground.
-    // When grounded, we send the canonical terrain + 1.1 with vy = 0.
+    //   • |vy| > AIRBORNE_VY_THRESHOLD — catches takeoff (vy ≈ +5.4) and landing (vy < 0)
+    //   • height_above > AIRBORNE_HEIGHT_THRESHOLD — catches the jump apex where vy ≈ 0
+    // When grounded, we send the canonical terrain + PLAYER_FLOAT_HEIGHT with vy = 0.
     let (y, vy, player_yaw) = player_query
         .single()
         .map(|(tf, lv)| {
             let terrain_y = sample_height(&terrain.noise, tf.translation.x, tf.translation.z, &terrain.cfg);
             let height_above = tf.translation.y - terrain_y;
-            let is_airborne = lv.y.abs() > 1.0 || height_above > 2.2;
+            let is_airborne =
+                lv.y.abs() > AIRBORNE_VY_THRESHOLD || height_above > AIRBORNE_HEIGHT_THRESHOLD;
             let (y, vy) = if is_airborne {
                 (tf.translation.y, lv.y)
             } else {
-                (terrain_y + 1.1, 0.0)
+                (terrain_y + PLAYER_FLOAT_HEIGHT, 0.0)
             };
             let fwd = tf.rotation * Vec3::NEG_Z;
             let yaw = (-fwd.x).atan2(-fwd.z);
@@ -117,18 +105,19 @@ pub fn gather_and_send_input(
 
     // A slot fires this frame if either its bound key was just pressed OR its
     // on-screen button was just clicked (SlotClickPulse).
-    let slot_fired = |i: usize| -> bool {
+    let slot_fired = |slot: ActionSlot| -> bool {
+        let i = slot.index();
         let key_hit = bindings.0.get(i).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
         let click_hit = pulse.0.get(i).copied().unwrap_or(false);
         key_hit || click_hit
     };
 
-    // Slots 0/1/2 enter Tank/DPS/Heal; Escape exits any active stance.
-    let enter_stance = if slot_fired(0) {
+    // Stance slots enter Tank/DPS/Heal; Escape exits any active stance.
+    let enter_stance = if slot_fired(ActionSlot::Stance1) {
         Some(RoleStance::Tank)
-    } else if slot_fired(1) {
+    } else if slot_fired(ActionSlot::Stance2) {
         Some(RoleStance::Dps)
-    } else if slot_fired(2) {
+    } else if slot_fired(ActionSlot::Stance3) {
         Some(RoleStance::Heal)
     } else {
         None
@@ -143,15 +132,15 @@ pub fn gather_and_send_input(
     // Right mouse locks facing to camera; otherwise track the player's actual rotation.
     *char_facing = if right_mouse { orbit.yaw } else { player_yaw };
 
-    let primary_commit   = slot_fired(4);
-    let secondary_commit = slot_fired(3);
-    let cube_left   = slot_fired(5);
-    let cube_bottom = slot_fired(6);
-    let cube_right  = slot_fired(7);
+    let primary_commit   = slot_fired(ActionSlot::Primary1);
+    let secondary_commit = slot_fired(ActionSlot::Primary2);
+    let cube_left   = slot_fired(ActionSlot::SecondaryLeft);
+    let cube_bottom = slot_fired(ActionSlot::SecondaryDown);
+    let cube_right  = slot_fired(ActionSlot::SecondaryRight);
 
     // Clear the click pulse now that this frame's input has been read — next
     // frame a click must press again to fire.
-    pulse.0 = [false; 8];
+    pulse.0 = [false; ActionSlot::COUNT];
 
     sender.send::<GameChannel>(PlayerInput {
         movement: Vec2::new(move_3d.x, -move_3d.z),

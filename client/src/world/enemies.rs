@@ -3,6 +3,7 @@ use bevy::prelude::*;
 
 use shared::components::enemy::{BossMarker, EnemyMarker, EnemyPosition, EnemyVelocity};
 use shared::instances::sample_height;
+use shared::settings::{BOSS_FLOAT_HEIGHT, PLAYER_FLOAT_HEIGHT};
 
 use super::instance::CurrentInstanceTerrain;
 use super::DEAD_RECKONING_MAX_EXTRAP_SECS;
@@ -129,7 +130,7 @@ pub fn sync_enemy_positions(
         let extrap_dt = (t - dr.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS);
         let new_x = dr.base_pos.x + dr.vel.x * extrap_dt;
         let new_z = dr.base_pos.z + dr.vel.y * extrap_dt;
-        let floor_offset = if boss.is_some() { 2.2 } else { 1.1 };
+        let floor_offset = if boss.is_some() { BOSS_FLOAT_HEIGHT } else { PLAYER_FLOAT_HEIGHT };
         let new_y = sample_height(&terrain.noise, new_x, new_z, &terrain.cfg) + floor_offset;
         tf.translation = Vec3::new(new_x, new_y, new_z);
     }

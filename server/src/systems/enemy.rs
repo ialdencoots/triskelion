@@ -6,6 +6,7 @@ use shared::components::enemy::{EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition};
 use shared::instances::{find_def, layout_sdf, sample_height, InstanceKind};
+use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::combat::{ThreatEntry, ThreatList};
 use super::instances::{create_instance, InstanceRegistry};
@@ -291,7 +292,7 @@ pub fn tick_enemy_walk(
 
             pos.x = fx;
             pos.z = fz;
-            pos.y = sample_height(&live.noise, fx, fz, &def.terrain) + 1.1;
+            pos.y = sample_height(&live.noise, fx, fz, &def.terrain) + PLAYER_FLOAT_HEIGHT;
         } else {
             pos.x = new_x;
             pos.z = new_z;

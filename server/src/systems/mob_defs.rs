@@ -6,6 +6,7 @@ use shared::components::combat::{Health, ReplicatedThreatList, Resistances};
 use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget};
 use shared::components::instance::InstanceId;
 use shared::instances::MobKind;
+use shared::settings::{BOSS_FLOAT_HEIGHT, PLAYER_FLOAT_HEIGHT};
 
 use super::combat::ThreatList;
 
@@ -41,11 +42,11 @@ struct MobStats {
 
 fn stats_for_kind(kind: MobKind) -> MobStats {
     match kind {
-        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: 1.1, aggro_range:  8.0, melee_range: 1.5, patrol: true,  resist_physical: 0.0, resist_arcane: 0.0, resist_nature: 0.0 },
-        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: 1.1, aggro_range: 10.0, melee_range: 1.8, patrol: true,  resist_physical: 0.2, resist_arcane: 0.0, resist_nature: 0.0 },
-        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: 1.1, aggro_range:  7.0, melee_range: 2.0, patrol: true,  resist_physical: 0.3, resist_arcane: 0.1, resist_nature: 0.0 },
-        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: 1.1, aggro_range: 12.0, melee_range: 2.0, patrol: false, resist_physical: 0.5, resist_arcane: 0.0, resist_nature: 0.3 },
-        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: 2.2, aggro_range: 16.0, melee_range: 3.0, patrol: false, resist_physical: 0.6, resist_arcane: 0.2, resist_nature: 0.4 },
+        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  8.0, melee_range: 1.5, patrol: true,  resist_physical: 0.0, resist_arcane: 0.0, resist_nature: 0.0 },
+        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 10.0, melee_range: 1.8, patrol: true,  resist_physical: 0.2, resist_arcane: 0.0, resist_nature: 0.0 },
+        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  7.0, melee_range: 2.0, patrol: true,  resist_physical: 0.3, resist_arcane: 0.1, resist_nature: 0.0 },
+        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 12.0, melee_range: 2.0, patrol: false, resist_physical: 0.5, resist_arcane: 0.0, resist_nature: 0.3 },
+        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: BOSS_FLOAT_HEIGHT,   aggro_range: 16.0, melee_range: 3.0, patrol: false, resist_physical: 0.6, resist_arcane: 0.2, resist_nature: 0.4 },
     }
 }
 
@@ -56,7 +57,7 @@ pub fn floor_offset_for_kind(kind: MobKind) -> f32 {
 }
 
 /// Spawn one mob.  `y` is the pre-computed world-space Y (caller already
-/// applied `sample_height + 1.1`).  Returns the spawned entity.
+/// applied `sample_height + floor_offset_for_kind`).  Returns the spawned entity.
 pub fn spawn_mob(
     commands: &mut Commands,
     kind: MobKind,

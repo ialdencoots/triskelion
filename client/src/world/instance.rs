@@ -12,6 +12,7 @@ use shared::instances::{
     InstanceDef, InstanceKind, TerrainConfig,
 };
 use shared::messages::InstanceEnteredMsg;
+use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::players::RemotePlayerMarker;
 use super::selection::SelectedTarget;
@@ -123,7 +124,7 @@ pub fn handle_instance_entered(
         let floor_y = terrain_surface_y(&terrain_res.noise, msg.spawn_x, msg.spawn_z, def);
         if let Ok(player_entity) = player_query.single() {
             if let Ok(mut pos) = avian_positions.get_mut(player_entity) {
-                pos.0 = Vec3::new(msg.spawn_x, floor_y + 1.1, msg.spawn_z);
+                pos.0 = Vec3::new(msg.spawn_x, floor_y + PLAYER_FLOAT_HEIGHT, msg.spawn_z);
             }
             // Zero residual velocity so carried-over downward motion can't
             // tunnel through the newly-registered trimesh before its first
