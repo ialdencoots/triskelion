@@ -15,10 +15,10 @@ use shared::components::player::{
     Class, GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget,
     PlayerSubclass, PlayerVelocity,
 };
-use shared::instances::{find_def, sample_height, InstanceKind};
+use shared::instances::{find_def, terrain_surface_y, InstanceKind};
 use shared::messages::{InstanceEnteredMsg, RequestInstanceMsg, RequestSpawnMsg};
 
-use super::combat::ThreatModifiers;
+use super::combat::{reset_on_stance_change, ThreatModifiers};
 use super::instances::{create_instance, populate_instance, remove_player_from_instance, InstanceRegistry};
 
 /// Links a client's network link entity to its spawned player entity and instance.
@@ -111,7 +111,7 @@ pub fn process_spawn_requests(
 
             let spawn_y = {
                 let live = reg.instances.get(&instance_id).expect("instance missing");
-                sample_height(&live.noise, spawn_x, spawn_z, &def.terrain) + 1.1
+                terrain_surface_y(&live.noise, spawn_x, spawn_z, def) + 1.1
             };
 
             // Add this client to the registry before populating.
@@ -203,7 +203,12 @@ pub fn process_instance_requests(
         With<Connected>,
     >,
     mut instance_id_q: Query<&mut InstanceId>,
-    mut combat_q: Query<&mut CombatState>,
+    mut player_state_q: Query<(
+        &mut CombatState,
+        Option<&mut ArcState>,
+        Option<&mut SecondaryArcState>,
+        Option<&mut CubeState>,
+    )>,
     mut reg: ResMut<InstanceRegistry>,
 ) {
     for (_link_entity, remote_id, entity_link, mut inst_link, mut receiver, mut instance_sender) in
@@ -259,9 +264,22 @@ pub fn process_instance_requests(
                 inst_id.0 = new_instance_id;
             }
 
-            // Reset stance on instance entry; ghost arc history clears automatically via stance-change detection.
-            if let Ok(mut combat) = combat_q.get_mut(player_entity) {
-                combat.active_stance = None;
+            // Reset stance on instance entry, and run the same per-stance
+            // cleanup that process_player_inputs does on any stance change:
+            // cancels an active cube and clears arc streak/history. Without
+            // this, switching instances would leave the cube rendered but
+            // unreachable (the input handler gates on stance).
+            if let Ok((mut combat, mut arc_opt, mut sec_opt, mut cube_opt)) =
+                player_state_q.get_mut(player_entity)
+            {
+                if combat.active_stance.is_some() {
+                    combat.active_stance = None;
+                    reset_on_stance_change(
+                        arc_opt.as_deref_mut(),
+                        sec_opt.as_deref_mut(),
+                        cube_opt.as_deref_mut(),
+                    );
+                }
             }
 
             // Update the link's instance tracking for disconnect cleanup.

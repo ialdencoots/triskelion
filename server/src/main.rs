@@ -6,6 +6,7 @@ use lightyear::prelude::server::ServerPlugins;
 
 mod plugin;
 mod systems;
+mod util;
 
 fn main() {
     App::new()

@@ -10,6 +10,7 @@ use shared::instances::{find_def, layout_sdf, sample_height, InstanceKind};
 use super::combat::{ThreatEntry, ThreatList};
 use super::instances::{create_instance, InstanceRegistry};
 use super::mob_defs::MobBehavior;
+use crate::util::cmp_f32;
 
 /// Threat seeded when a mob first aggros onto a player, before any damage is
 /// dealt.  Small enough that a single hit immediately overtakes it.
@@ -49,11 +50,7 @@ fn select_threat_target(
             if dist > leash_range { return None; }
             Some((entry.threat, dist, dx, dz, entity))
         })
-        .max_by(|a, b| {
-            a.0.partial_cmp(&b.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
-        })
+        .max_by(|a, b| cmp_f32(a.0, b.0).then(cmp_f32(b.1, a.1)))
         .map(|(_, dist, dx, dz, entity)| (dist, dx, dz, entity))
 }
 
@@ -104,7 +101,7 @@ fn find_nearest_player_in_instance(
             (dist, dx, dz, entity)
         })
         .filter(|(dist, _, _, _)| *dist <= max_dist)
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| cmp_f32(a.0, b.0))
 }
 
 /// Returns the clamped separation force vector for a mob at `my_xz` from all

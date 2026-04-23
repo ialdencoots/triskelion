@@ -8,8 +8,8 @@ use lightyear::prelude::*;
 use shared::components::enemy::EnemyMarker;
 use shared::components::instance::InstanceId;
 use shared::instances::{
-    build_noise, find_def, layout_sdf, sample_height,
-    InstanceDef, InstanceKind, TerrainConfig, BLEND_DIST, WALL_HEIGHT,
+    build_noise, find_def, sample_height, terrain_surface_y,
+    InstanceDef, InstanceKind, TerrainConfig,
 };
 use shared::messages::InstanceEnteredMsg;
 
@@ -106,8 +106,11 @@ pub fn handle_instance_entered(
             collider,
         ));
 
-        // Teleport local physics body to spawn position.
-        let floor_y = sample_height(&terrain_res.noise, msg.spawn_x, msg.spawn_z, &msg.terrain);
+        // Teleport local physics body to spawn position. Use the layout-aware
+        // surface height so the player lands on the actual mesh — bare
+        // sample_height underplaces into walls when use_layout_terrain is true,
+        // putting the camera inside the terrain (renders as void).
+        let floor_y = terrain_surface_y(&terrain_res.noise, msg.spawn_x, msg.spawn_z, def);
         if let Ok(player_entity) = player_query.single() {
             if let Ok(mut pos) = avian_positions.get_mut(player_entity) {
                 pos.0 = Vec3::new(msg.spawn_x, floor_y + 1.1, msg.spawn_z);
@@ -165,17 +168,11 @@ pub fn build_layout_terrain_mesh(cfg: &TerrainConfig, def: &InstanceDef) -> Mesh
     let mut uvs:       Vec<[f32; 2]> = Vec::with_capacity(n * n);
     let mut indices:   Vec<u32>      = Vec::with_capacity(cfg.size * cfg.size * 6);
 
-    let layout_h = |wx: f32, wz: f32| -> f32 {
-        let base = sample_height(&noise, wx, wz, cfg);
-        let sdf  = layout_sdf(wx, wz, def);
-        base + (sdf / BLEND_DIST).clamp(0.0, 1.0) * WALL_HEIGHT
-    };
-
     for z in 0..n {
         for x in 0..n {
             let wx = x as f32 * scale - offset;
             let wz = z as f32 * scale - offset;
-            positions.push([wx, layout_h(wx, wz), wz]);
+            positions.push([wx, terrain_surface_y(&noise, wx, wz, def), wz]);
             normals.push([0.0, 1.0, 0.0]); // overwritten below
             uvs.push([x as f32 / cfg.size as f32, z as f32 / cfg.size as f32]);
         }

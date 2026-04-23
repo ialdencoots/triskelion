@@ -20,6 +20,39 @@ use shared::messages::{DamageNumberMsg, SelectTargetMsg};
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
 use super::minigame::{cancel_cube, process_arc_commit, process_cube_collect};
+use crate::util::cmp_f32;
+
+/// Wipe per-stance state that shouldn't carry across a stance transition:
+/// arc streak counters + quality history (both arcs), and any active cube.
+///
+/// Called from `process_player_inputs` when the player toggles stance via
+/// input, and from `process_instance_requests` when an instance switch drops
+/// stance to `None` server-side. Without the second call site, switching
+/// instances would leave a mid-flight cube alive (the input handler gates on
+/// stance, so it'd be unreachable but still rendered).
+pub fn reset_on_stance_change(
+    arc: Option<&mut ArcState>,
+    secondary: Option<&mut SecondaryArcState>,
+    cube: Option<&mut CubeState>,
+) {
+    if let Some(arc) = arc {
+        arc.streak = 0;
+        arc.streak_at_last_activation = 0;
+        arc.apex_visits_since_commit = 0;
+        arc.commit.history.clear();
+    }
+    if let Some(secondary) = secondary {
+        secondary.0.streak = 0;
+        secondary.0.streak_at_last_activation = 0;
+        secondary.0.apex_visits_since_commit = 0;
+        secondary.0.commit.history.clear();
+    }
+    if let Some(cube) = cube {
+        if cube.active {
+            cancel_cube(cube);
+        }
+    }
+}
 
 // ── Server-only threat components ────────────────────────────────────────────
 
@@ -145,34 +178,22 @@ pub fn process_player_inputs(
             // an active cube that outlives its stance is unreachable (the
             // input handlers gate on stance) and would sit there orphaned.
             if prev_stance != combat.active_stance {
-                if let Some(ref mut arc) = arc_opt {
-                    arc.streak = 0;
-                    arc.streak_at_last_activation = 0;
-                    arc.apex_visits_since_commit = 0;
-                    arc.commit.history.clear();
-                }
-                if let Some(ref mut secondary) = secondary_arc_opt {
-                    secondary.0.streak = 0;
-                    secondary.0.streak_at_last_activation = 0;
-                    secondary.0.apex_visits_since_commit = 0;
-                    secondary.0.commit.history.clear();
-                }
-                if let Some(ref mut cube) = cube_opt {
-                    if cube.active {
-                        cancel_cube(cube);
-                    }
-                }
+                reset_on_stance_change(
+                    arc_opt.as_deref_mut(),
+                    secondary_arc_opt.as_deref_mut(),
+                    cube_opt.as_deref_mut(),
+                );
             }
 
             // ── Arc commits (Physical class) ───────────────────────────────────
             if input.minigame.action_1 {
-                info!("[ARC] action_1 received — stance={:?} arc_present={}",
+                debug!("[ARC] action_1 received — stance={:?} arc_present={}",
                     combat.active_stance, arc_opt.is_some());
             }
             if input.minigame.action_1 && combat.active_stance.is_some() {
                 if let Some(ref mut arc) = arc_opt {
                     let was_unlocked = !arc.commit.in_lockout;
-                    info!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
+                    debug!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
                         arc.commit.last_quality, input.facing_yaw);
                     process_arc_commit(arc);
                     if was_unlocked {
@@ -215,14 +236,14 @@ pub fn process_player_inputs(
             );
             if in_tank_heal {
                 if let Some(ref mut cube) = cube_opt {
-                    if input.minigame.action_3 {
-                        process_cube_collect(cube, CubeEdge::Left);
-                    }
-                    if input.minigame.action_4 {
-                        process_cube_collect(cube, CubeEdge::Bottom);
-                    }
-                    if input.minigame.action_5 {
-                        process_cube_collect(cube, CubeEdge::Right);
+                    for (pressed, edge) in [
+                        (input.minigame.action_3, CubeEdge::Left),
+                        (input.minigame.action_4, CubeEdge::Bottom),
+                        (input.minigame.action_5, CubeEdge::Right),
+                    ] {
+                        if pressed {
+                            process_cube_collect(cube, edge);
+                        }
                     }
                 }
             }
@@ -309,7 +330,7 @@ pub fn sync_replicated_threat_list(
                     .map(|(_, pid)| (pid.0, entry.threat))
             })
             .collect();
-        entries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        entries.sort_by(|a, b| cmp_f32(b.1, a.1));
         replicated.entries = entries;
     }
 }
@@ -395,18 +416,18 @@ fn emit_arc_damage(
     let mob_entity = match target.and_then(|t| t.0.as_ref()) {
         Some(SelectedMobOrPlayer::Mob(e)) => *e,
         other => {
-            info!("[ARC DMG] no mob target — target={other:?}");
+            debug!("[ARC DMG] no mob target — target={other:?}");
             return;
         }
     };
 
     let Ok((enemy_pos, health_opt)) = enemy_query.get(mob_entity) else {
-        info!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition");
+        debug!("[ARC DMG] {mob_entity:?} not in enemy_query — missing EnemyMarker or EnemyPosition");
         return;
     };
     if let Some(h) = health_opt {
         if !h.is_alive() {
-            info!("[ARC DMG] target already dead");
+            debug!("[ARC DMG] target already dead");
             return;
         }
     }
@@ -418,20 +439,20 @@ fn emit_arc_damage(
     let dist       = delta.length();
 
     if dist > MELEE_RANGE {
-        info!("[ARC DMG] out of range — dist={dist:.2} max={MELEE_RANGE}");
+        debug!("[ARC DMG] out of range — dist={dist:.2} max={MELEE_RANGE}");
         return;
     }
 
     let to_target = delta.normalize_or_zero();
     if to_target == Vec3::ZERO {
-        info!("[ARC DMG] player standing on mob");
+        debug!("[ARC DMG] player standing on mob");
         return;
     }
 
     let forward = Quat::from_rotation_y(facing_yaw) * Vec3::NEG_Z;
     let dot = forward.dot(to_target);
     if dot < FACING_COS_MIN {
-        info!("[ARC DMG] not facing target — dot={dot:.2} min={FACING_COS_MIN}");
+        debug!("[ARC DMG] not facing target — dot={dot:.2} min={FACING_COS_MIN}");
         return;
     }
 
@@ -484,7 +505,7 @@ pub fn apply_damage_events(
         let final_dmg = resolve_damage(ev, r);
         health.current = (health.current - final_dmg).max(0.0);
 
-        info!(
+        debug!(
             "[DMG] {:?}->{:?} ty={:?} base={:.1} q={:.2} +{:.2} x{:.2} resist={:.2} final={:.1} hp={:.1}/{:.1}",
             ev.attacker, ev.target, ev.ty, ev.base, ev.quality, ev.additive, ev.multipliers,
             r, final_dmg, health.current, health.max,

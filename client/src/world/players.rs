@@ -5,10 +5,10 @@ use shared::components::player::{PlayerId, PlayerPosition, PlayerVelocity};
 use shared::instances::sample_height;
 
 use super::instance::CurrentInstanceTerrain;
+use super::terrain::PlayerMarker;
+use super::DEAD_RECKONING_MAX_EXTRAP_SECS;
 
 use crate::plugin::LocalClientId;
-
-use super::terrain::PlayerMarker;
 
 /// Marks a client-side entity that renders a remote (non-local) player.
 #[derive(Component)]
@@ -112,7 +112,7 @@ pub fn sync_player_positions(
     let t = time.elapsed_secs();
     let frame_dt = time.delta_secs();
     for (dr, mut tf) in query.iter_mut() {
-        let dt = (t - dr.base_time).clamp(0.0, 0.3);
+        let dt = (t - dr.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS);
         let target_x = dr.base_pos.x + dr.vel.x * dt;
         let target_z = dr.base_pos.z + dr.vel.y * dt;
         let extrap_y = dr.base_pos.y + dr.vel_y * dt;

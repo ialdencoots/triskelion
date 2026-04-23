@@ -5,6 +5,7 @@ use shared::components::enemy::{BossMarker, EnemyMarker, EnemyPosition, EnemyVel
 use shared::instances::sample_height;
 
 use super::instance::CurrentInstanceTerrain;
+use super::DEAD_RECKONING_MAX_EXTRAP_SECS;
 
 /// Client-only dead-reckoning state.  Not replicated.
 ///
@@ -125,8 +126,7 @@ pub fn sync_enemy_positions(
     }
 
     for (dr, boss, mut tf) in query.iter_mut() {
-        // Cap extrapolation at 300 ms to limit drift if the server goes quiet.
-        let extrap_dt = (t - dr.base_time).clamp(0.0, 0.3);
+        let extrap_dt = (t - dr.base_time).clamp(0.0, DEAD_RECKONING_MAX_EXTRAP_SECS);
         let new_x = dr.base_pos.x + dr.vel.x * extrap_dt;
         let new_z = dr.base_pos.z + dr.vel.y * extrap_dt;
         let floor_offset = if boss.is_some() { 2.2 } else { 1.1 };

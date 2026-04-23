@@ -16,6 +16,11 @@ pub mod terrain;
 
 pub use selection::SelectedTarget;
 
+/// Maximum interval (seconds) over which dead-reckoning extrapolates a
+/// remote entity's position before clamping. Bounds visual drift if the
+/// server goes quiet (~10 Hz updates expected).
+pub(crate) const DEAD_RECKONING_MAX_EXTRAP_SECS: f32 = 0.3;
+
 #[derive(TnuaScheme)]
 #[scheme(basis = TnuaBuiltinWalk)]
 pub enum ControlScheme {

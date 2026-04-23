@@ -174,6 +174,24 @@ pub fn layout_sdf(px: f32, pz: f32, def: &InstanceDef) -> f32 {
     min_d
 }
 
+/// World-space surface height at `(x, z)` for `def`'s terrain.
+///
+/// For layout instances this is `sample_height + clamp(layout_sdf/BLEND_DIST, 0, 1) * WALL_HEIGHT`,
+/// matching the formula in `build_layout_terrain_mesh`. For non-layout instances
+/// it is just `sample_height`. Use this anywhere player/mob placement needs to
+/// land on the visible mesh — bare `sample_height` underplaces entities into
+/// walls in layout instances.
+#[inline]
+pub fn terrain_surface_y(noise: &FastNoiseLite, x: f32, z: f32, def: &InstanceDef) -> f32 {
+    let base = sample_height(noise, x, z, &def.terrain);
+    if def.use_layout_terrain {
+        let sdf = layout_sdf(x, z, def);
+        base + (sdf / BLEND_DIST).clamp(0.0, 1.0) * WALL_HEIGHT
+    } else {
+        base
+    }
+}
+
 /// Distance from point `(px, pz)` to the finite line segment `(ax,az)–(bx,bz)`.
 fn segment_dist(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
     let dx = bx - ax;
