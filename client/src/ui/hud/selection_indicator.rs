@@ -1,8 +1,10 @@
 use bevy::prelude::*;
 
 use shared::components::enemy::{BossMarker, EnemyMarker};
+use shared::components::instance::InstanceId;
 
 use crate::world::camera::OrbitCamera;
+use crate::world::instance::CurrentInstanceId;
 use crate::world::players::RemotePlayerMarker;
 use crate::world::selection::SelectedTarget;
 
@@ -74,7 +76,9 @@ pub fn spawn_selection_indicator(mut commands: Commands) {
 /// space and sizes/positions the four corner brackets around it.
 pub fn update_selection_indicator(
     selected: Res<SelectedTarget>,
+    current_instance: Res<CurrentInstanceId>,
     target_query: Query<&Transform, Or<(With<EnemyMarker>, With<RemotePlayerMarker>)>>,
+    instance_query: Query<&InstanceId>,
     boss_query: Query<(), With<BossMarker>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<OrbitCamera>>,
     mut indicator_query: Query<(&mut Node, &mut Visibility), With<SelectionIndicatorRoot>>,
@@ -86,6 +90,17 @@ pub fn update_selection_indicator(
         *vis = Visibility::Hidden;
         return;
     };
+
+    // Cross-instance selection is allowed (e.g. clicking a party member in a
+    // different zone via the group frame), but the world-space corner bracket
+    // must not render — the target's Transform is not anchored to our scene,
+    // so it would project onto empty terrain.
+    if let Ok(inst) = instance_query.get(target) {
+        if inst.0 != current_instance.0 {
+            *vis = Visibility::Hidden;
+            return;
+        }
+    }
 
     let Ok(tf) = target_query.get(target) else {
         *vis = Visibility::Hidden;

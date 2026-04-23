@@ -61,6 +61,8 @@ pub fn handle_instance_entered(
     scene_entities: Query<Entity, With<InstanceSceneTag>>,
     player_query: Query<Entity, With<PlayerMarker>>,
     mut avian_positions: Query<&mut avian3d::prelude::Position>,
+    mut avian_linvel: Query<&mut avian3d::prelude::LinearVelocity>,
+    mut avian_angvel: Query<&mut avian3d::prelude::AngularVelocity>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -122,6 +124,15 @@ pub fn handle_instance_entered(
         if let Ok(player_entity) = player_query.single() {
             if let Ok(mut pos) = avian_positions.get_mut(player_entity) {
                 pos.0 = Vec3::new(msg.spawn_x, floor_y + 1.1, msg.spawn_z);
+            }
+            // Zero residual velocity so carried-over downward motion can't
+            // tunnel through the newly-registered trimesh before its first
+            // collision query resolves.
+            if let Ok(mut v) = avian_linvel.get_mut(player_entity) {
+                v.0 = Vec3::ZERO;
+            }
+            if let Ok(mut w) = avian_angvel.get_mut(player_entity) {
+                w.0 = Vec3::ZERO;
             }
         }
     }
