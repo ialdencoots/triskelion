@@ -4,6 +4,7 @@ use shared::components::combat::Health;
 use shared::components::enemy::EnemyMarker;
 
 use crate::world::camera::OrbitCamera;
+use crate::world::instance::FollowsEntity;
 use crate::world::terrain::PlayerMarker;
 
 use super::health_bar;
@@ -48,6 +49,7 @@ pub fn on_enemy_bar_added(trigger: On<Add, EnemyMarker>, mut commands: Commands)
     commands
         .spawn((
             EnemyHealthBarRoot(enemy),
+            FollowsEntity(enemy),
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Px(BAR_W),

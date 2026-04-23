@@ -148,31 +148,20 @@ pub fn assign_player_to_instance(
 }
 
 /// Remove a player from its instance.
-/// If the instance becomes empty, despawns all mob entities and removes the
-/// instance from the registry.
+///
+/// The instance itself is kept alive even when empty so a group's progress
+/// (killed mobs, boss state, etc.) persists across exits and rejoins. Reset
+/// logic (timeouts, explicit resets) is handled elsewhere.
 pub fn remove_player_from_instance(
     instance_id: u32,
     peer_id: PeerId,
     player_entity: Entity,
     reg: &mut InstanceRegistry,
-    commands: &mut Commands,
+    _commands: &mut Commands,
 ) {
     let Some(live) = reg.instances.get_mut(&instance_id) else { return };
     live.client_ids.retain(|&id| id != peer_id);
     live.entities.retain(|&e| e != player_entity);
-
-    if !live.client_ids.is_empty() {
-        return;
-    }
-
-    info!("[INSTANCES] Instance {instance_id} is now empty — tearing down");
-    let mob_entities: Vec<Entity> = live.entities.drain(..).collect();
-    for e in mob_entities {
-        commands.entity(e).despawn();
-    }
-    let key = (live.group_id, live.kind);
-    reg.instances.remove(&instance_id);
-    reg.group_instances.remove(&key);
 }
 
 // ── System ────────────────────────────────────────────────────────────────────

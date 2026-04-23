@@ -17,37 +17,53 @@ pub struct EnterInstanceButton {
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
 pub fn spawn_instance_button(mut commands: Commands) {
-    commands.spawn((
-        Node {
+    commands
+        .spawn(Node {
             position_type: PositionType::Absolute,
-            bottom: Val::Px(20.0),
-            left: Val::Percent(50.0),
-            // Pull left by half the button width so it centres on-screen.
-            margin: UiRect::left(Val::Px(-90.0)),
-            width: Val::Px(180.0),
-            height: Val::Px(36.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border: UiRect::all(Val::Px(1.0)),
+            top: Val::Px(20.0),
+            right: Val::Px(20.0),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(6.0),
             ..default()
-        },
-        Button,
-        BackgroundColor(Color::srgba(0.08, 0.08, 0.14, 0.85)),
-        BorderColor {
-            top: Color::srgba(0.5, 0.4, 0.8, 0.6),
-            bottom: Color::srgba(0.5, 0.4, 0.8, 0.6),
-            left: Color::srgba(0.5, 0.4, 0.8, 0.6),
-            right: Color::srgba(0.5, 0.4, 0.8, 0.6),
-        },
-        EnterInstanceButton { kind: InstanceKind::CrystalCaverns },
-    ))
-    .with_children(|parent| {
-        parent.spawn((
-            Text::new("Enter Crystal Caverns"),
-            TextFont { font_size: 13.0, ..default() },
-            TextColor(Color::srgb(0.85, 0.75, 1.0)),
-        ));
-    });
+        })
+        .with_children(|parent| {
+            spawn_button(
+                parent,
+                InstanceKind::CrystalCaverns,
+                "Enter Crystal Caverns",
+            );
+            spawn_button(parent, InstanceKind::Overworld, "Return to Overworld");
+        });
+}
+
+fn spawn_button(parent: &mut ChildSpawnerCommands, kind: InstanceKind, label: &str) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Px(180.0),
+                height: Val::Px(36.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            Button,
+            BackgroundColor(Color::srgba(0.08, 0.08, 0.14, 0.85)),
+            BorderColor {
+                top: Color::srgba(0.5, 0.4, 0.8, 0.6),
+                bottom: Color::srgba(0.5, 0.4, 0.8, 0.6),
+                left: Color::srgba(0.5, 0.4, 0.8, 0.6),
+                right: Color::srgba(0.5, 0.4, 0.8, 0.6),
+            },
+            EnterInstanceButton { kind },
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text::new(label),
+                TextFont { font_size: 13.0, ..default() },
+                TextColor(Color::srgb(0.85, 0.75, 1.0)),
+            ));
+        });
 }
 
 // ── Interaction ───────────────────────────────────────────────────────────────

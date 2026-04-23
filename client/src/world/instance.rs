@@ -14,6 +14,7 @@ use shared::instances::{
 use shared::messages::InstanceEnteredMsg;
 
 use super::players::RemotePlayerMarker;
+use super::selection::SelectedTarget;
 use super::terrain::PlayerMarker;
 
 // ── Resources ─────────────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ pub fn handle_instance_entered(
     mut link_query: Query<&mut MessageReceiver<InstanceEnteredMsg>>,
     mut terrain_res: ResMut<CurrentInstanceTerrain>,
     mut current_instance: ResMut<CurrentInstanceId>,
+    mut selected_target: ResMut<SelectedTarget>,
     scene_entities: Query<Entity, With<InstanceSceneTag>>,
     player_query: Query<Entity, With<PlayerMarker>>,
     mut avian_positions: Query<&mut avian3d::prelude::Position>,
@@ -72,6 +74,12 @@ pub fn handle_instance_entered(
 
         // Record which instance we are now in (used by sync_instance_visibility).
         current_instance.0 = msg.instance_id;
+        // Drop any target from the previous instance. Without this, the target
+        // frame, selection indicator, and threat panel keep displaying an
+        // entity that is no longer part of the player's scene (persisted
+        // instances retain their entities, so out-of-instance entities still
+        // exist on the client).
+        selected_target.0 = None;
 
         // Despawn the previous instance's terrain.
         for e in scene_entities.iter() {
@@ -144,6 +152,34 @@ pub fn sync_instance_visibility(
         } else {
             Visibility::Hidden
         };
+    }
+}
+
+/// Tags a UI/overlay entity as visually tracking a specific world entity.
+/// `hide_out_of_instance_overlays` force-hides it while the target is in
+/// another instance, so any screen-anchored element (health bars, floating
+/// damage numbers, future nameplates/cast bars/buff icons) automatically stops
+/// drawing when its subject is out of scope.
+#[derive(Component)]
+pub struct FollowsEntity(pub Entity);
+
+/// Forces `Visibility::Hidden` on every `FollowsEntity` whose target lives in
+/// a different instance than the local player (or whose target no longer
+/// exists). Runs in `PostUpdate` so per-frame UI updaters (which set their own
+/// visibility in `Update`) have already written, and this gets the final say.
+pub fn hide_out_of_instance_overlays(
+    current: Res<CurrentInstanceId>,
+    targets: Query<&InstanceId>,
+    mut followers: Query<(&FollowsEntity, &mut Visibility)>,
+) {
+    for (follow, mut vis) in followers.iter_mut() {
+        let hide = match targets.get(follow.0) {
+            Ok(inst) => inst.0 != current.0,
+            Err(_) => true,
+        };
+        if hide && !matches!(*vis, Visibility::Hidden) {
+            *vis = Visibility::Hidden;
+        }
     }
 }
 

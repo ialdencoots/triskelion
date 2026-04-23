@@ -8,6 +8,7 @@ use shared::components::enemy::EnemyMarker;
 use shared::messages::DamageNumberMsg;
 
 use crate::world::camera::OrbitCamera;
+use crate::world::instance::FollowsEntity;
 
 /// Seconds a floating damage number lives before despawning.
 const LIFETIME: f32 = 1.0;
@@ -120,6 +121,7 @@ pub fn spawn_damage_numbers(
                     offset_x,
                     is_crit: msg.is_crit,
                 },
+                FollowsEntity(msg.target),
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(-9999.0),

@@ -115,15 +115,16 @@ pub fn process_spawn_requests(
             };
 
             // Add this client to the registry before populating.
-            let is_first_client = {
+            let needs_population = {
                 let live = reg.instances.get_mut(&instance_id).expect("instance missing");
-                let first = live.client_ids.is_empty();
+                let needs = live.pack_entities.is_empty();
                 live.client_ids.push(peer_id);
-                first
+                needs
             };
 
-            // Lazily populate mobs when the first client joins.
-            if is_first_client {
+            // Populate mobs only when the instance has never been populated;
+            // persisted instances keep their existing mobs across rejoins.
+            if needs_population {
                 populate_instance(instance_id, &mut reg, &mut commands);
             }
 
@@ -246,16 +247,17 @@ pub fn process_instance_requests(
             let (spawn_x, spawn_z) = (angle.cos() * 3.0, angle.sin() * 3.0);
 
             // Add this client to the new instance registry.
-            let is_first_client = {
+            let needs_population = {
                 let live = reg.instances.get_mut(&new_instance_id).expect("instance missing");
-                let first = live.client_ids.is_empty();
+                let needs = live.pack_entities.is_empty();
                 live.client_ids.push(peer_id);
                 live.entities.push(player_entity);
-                first
+                needs
             };
 
-            // Lazily populate mobs when the first client joins.
-            if is_first_client {
+            // Populate mobs only when the instance has never been populated;
+            // persisted instances keep their existing mobs across rejoins.
+            if needs_population {
                 populate_instance(new_instance_id, &mut reg, &mut commands);
             }
 

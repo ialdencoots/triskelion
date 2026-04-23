@@ -76,5 +76,9 @@ impl Plugin for WorldPlugin {
                 players::correct_local_player_position,
             ).chain(),
         );
+
+        // Runs after every Update-schedule UI updater so its `Hidden` write is
+        // the last word on this frame's visibility.
+        app.add_systems(PostUpdate, instance::hide_out_of_instance_overlays);
     }
 }

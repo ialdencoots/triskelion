@@ -490,12 +490,13 @@ fn resolve_damage(ev: &DamageEvent, resist: f32) -> f32 {
 /// can pop a floating number over the target.
 pub fn apply_damage_events(
     mut messages: MessageReader<DamageEvent>,
-    mut target_query: Query<(&mut Health, &Resistances, Option<&mut ThreatList>), With<EnemyMarker>>,
+    mut target_query: Query<(&mut Health, &Resistances, Option<&mut ThreatList>, Option<&InstanceId>), With<EnemyMarker>>,
     threat_mods_query: Query<&ThreatModifiers>,
+    attacker_instance_query: Query<&InstanceId>,
     mut number_senders: Query<(&PlayerEntityLink, &mut MessageSender<DamageNumberMsg>)>,
 ) {
     for ev in messages.read() {
-        let Ok((mut health, resist, threat_opt)) = target_query.get_mut(ev.target) else {
+        let Ok((mut health, resist, threat_opt, target_inst)) = target_query.get_mut(ev.target) else {
             info!("[DMG] target {:?} missing Health/Resistances (or not an enemy)", ev.target);
             continue;
         };
@@ -530,6 +531,20 @@ pub fn apply_damage_events(
         // Floating damage numbers are a personal cue — send only to the
         // attacker's client. Other players will see the hit through the
         // forthcoming combat log, not as a world-space popup.
+        //
+        // Suppress the number when attacker and target are in different
+        // instances (e.g. a DoT the attacker applied before leaving the
+        // instance is still ticking on the old target). Without this the
+        // attacker keeps seeing damage numbers pop from enemies in a scene
+        // they no longer occupy.
+        let attacker_inst = attacker_instance_query.get(ev.attacker).ok().map(|i| i.0);
+        let target_inst = target_inst.map(|i| i.0);
+        if let (Some(a), Some(t)) = (attacker_inst, target_inst) {
+            if a != t {
+                continue;
+            }
+        }
+
         let payload = DamageNumberMsg {
             target: ev.target,
             amount: final_dmg,
