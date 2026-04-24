@@ -17,7 +17,7 @@ const AVATAR_SIZE: f32 = 36.0;
 // ── Marker components ─────────────────────────────────────────────────────────
 
 #[derive(Component)]
-pub struct GroupFrameRoot;
+pub(super) struct GroupFrameRoot;
 
 /// Container for the local player's row (always rendered first).
 #[derive(Component)]
@@ -30,7 +30,7 @@ pub(super) struct OthersSection;
 /// One row in the party frame.  Stores the server-replicated entity it represents
 /// so update systems can read `PlayerName` and `Health` from it.
 #[derive(Component)]
-pub struct PartyRow(pub Entity);
+pub(super) struct PartyRow(pub(super) Entity);
 
 /// The green health fill inside a party row.
 #[derive(Component)]
@@ -42,7 +42,7 @@ pub(super) struct PartyNameText(pub(super) Entity);
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
-pub fn spawn_group_frame(mut commands: Commands) {
+pub(super) fn spawn_group_frame(mut commands: Commands) {
     let self_section = commands
         .spawn((SelfSection, Node { flex_direction: FlexDirection::Column, ..default() }))
         .id();
@@ -147,7 +147,7 @@ fn spawn_party_row(commands: &mut Commands, game_entity: Entity, is_self: bool) 
 
 /// Fires when the server replicates a `PlayerId` to this client.
 /// Inserts a party row into the correct section of the group frame.
-pub fn on_party_member_added(
+pub(super) fn on_party_member_added(
     trigger: On<Add, PlayerId>,
     local_id: Res<LocalClientId>,
     player_id_q: Query<&PlayerId>,
@@ -172,7 +172,7 @@ pub fn on_party_member_added(
 
 /// Fires when a player disconnects and their `PlayerId` is removed.
 /// Despawns the matching party row (and its children).
-pub fn on_party_member_removed(
+pub(super) fn on_party_member_removed(
     trigger: On<Remove, PlayerId>,
     row_q: Query<(Entity, &PartyRow)>,
     mut commands: Commands,
@@ -189,7 +189,7 @@ pub fn on_party_member_removed(
 // ── Update systems ────────────────────────────────────────────────────────────
 
 /// Refreshes name text and health bars for every party row each frame.
-pub fn update_party_rows(
+pub(super) fn update_party_rows(
     player_names: Query<&PlayerName>,
     health_q: Query<&Health>,
     mut name_q: Query<(&PartyNameText, &mut Text)>,
@@ -212,7 +212,7 @@ pub fn update_party_rows(
 }
 
 /// Fades rows whose game entity is in a different instance than the local player.
-pub fn update_party_row_fade(
+pub(super) fn update_party_row_fade(
     local_id: Res<LocalClientId>,
     player_q: Query<(&PlayerId, Option<&InstanceId>)>,
     mut name_q: Query<(&PartyNameText, &mut TextColor)>,
@@ -244,7 +244,7 @@ pub fn update_party_row_fade(
 /// Highlights rows on hover and sets `SelectedTarget` when any party row is
 /// clicked — including the local player's own row (needed for self-targeted
 /// abilities like heals).
-pub fn handle_party_row_interaction(
+pub(super) fn handle_party_row_interaction(
     mut interaction_q: Query<
         (&Interaction, &mut BackgroundColor, &PartyRow),
         (Changed<Interaction>, With<Button>),
