@@ -67,6 +67,68 @@ impl DeadReckoning {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    //! Pure-function coverage for `DeadReckoning::extrapolated_at`.
+    //!
+    //! Three invariants worth pinning:
+    //!   1. Linear extrapolation `base + vel × dt` within the budget.
+    //!   2. Hard clamp at `DEAD_RECKONING_MAX_EXTRAP_SECS` so a quiet server
+    //!      doesn't let remote entities drift away forever.
+    //!   3. The Vec2 → (XZ) mapping (`vel.y` is the Z component, not the
+    //!      world-space vertical), and `vel_y` as a separate Y channel.
+    use super::*;
+
+    fn dr(base: Vec3, vel_xz: Vec2, vel_y: f32, base_time: f32) -> DeadReckoning {
+        DeadReckoning { base_pos: base, vel: vel_xz, vel_y, base_time }
+    }
+
+    fn approx_eq(a: Vec3, b: Vec3) -> bool {
+        (a - b).length() < 1e-5
+    }
+
+    #[test]
+    fn extrapolates_linearly_within_budget() {
+        let r = dr(Vec3::ZERO, Vec2::new(2.0, 0.0), 0.0, 0.0);
+        assert!(approx_eq(r.extrapolated_at(0.1), Vec3::new(0.2, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn clamps_extrapolation_at_max_extrap_secs() {
+        // Server has gone silent for 10s; visual drift must stay bounded by
+        // the 0.3s budget × 2.0 m/s = 0.6m, not 20m.
+        let r = dr(Vec3::ZERO, Vec2::new(2.0, 0.0), 0.0, 0.0);
+        let expected_max_drift = 2.0 * DEAD_RECKONING_MAX_EXTRAP_SECS;
+        assert!(approx_eq(
+            r.extrapolated_at(10.0),
+            Vec3::new(expected_max_drift, 0.0, 0.0),
+        ));
+    }
+
+    #[test]
+    fn elapsed_is_zero_when_now_precedes_base_time() {
+        // Guards against negative dt from clock skew producing backwards motion.
+        let r = dr(Vec3::new(5.0, 0.0, 0.0), Vec2::new(99.0, 0.0), 0.0, 100.0);
+        assert!(approx_eq(r.extrapolated_at(50.0), Vec3::new(5.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn enemy_with_zero_vel_y_stays_planar() {
+        // Enemies don't replicate vertical velocity — Y must hold steady at
+        // the base regardless of how much XZ extrapolation happens.
+        let r = dr(Vec3::new(0.0, 3.0, 0.0), Vec2::new(1.0, 0.0), 0.0, 0.0);
+        assert_eq!(r.extrapolated_at(0.2).y, 3.0);
+    }
+
+    #[test]
+    fn player_vel_y_extrapolates_independently_of_xz() {
+        // Jumping remote player: vel.y is the world-Z velocity, vel_y is the
+        // world-Y velocity. The two channels do not interfere.
+        let r = dr(Vec3::ZERO, Vec2::new(1.0, 1.0), 4.0, 0.0);
+        assert!(approx_eq(r.extrapolated_at(0.1), Vec3::new(0.1, 0.4, 0.1)));
+    }
+}
+
 #[derive(TnuaScheme)]
 #[scheme(basis = TnuaBuiltinWalk)]
 pub enum ControlScheme {

@@ -349,3 +349,165 @@ pub fn tick_heartbeat_states(time: Res<Time>, mut query: Query<&mut HeartbeatSta
         hb.envelope_noise  *= (-dt / 3.0_f32).exp();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pure-function tests for arc commit / tick logic. The remaining minigame
+    //! systems (cube FSM, bar fill, wave interference, value lock, heartbeat)
+    //! are not yet covered — see `server/tests/arc_system.rs` for the App-based
+    //! pattern that the next round of tests should follow.
+    use super::*;
+
+    fn arc_at_proximity(p: f32) -> ArcState {
+        let mut arc = ArcState::default();
+        arc.theta = FRAC_PI_2 + arc.amplitude * p;
+        arc
+    }
+
+    #[test]
+    fn close_zone_commit_increments_streak() {
+        let mut arc = arc_at_proximity(0.0);
+        arc.streak = 3;
+        process_arc_commit(&mut arc);
+        assert_eq!(arc.streak, 4);
+        assert!(arc.commit.in_lockout);
+    }
+
+    #[test]
+    fn far_zone_commit_resets_streak_and_activation_baseline() {
+        let mut arc = arc_at_proximity(0.9);
+        arc.streak = 7;
+        arc.streak_at_last_activation = 4;
+        process_arc_commit(&mut arc);
+        assert_eq!(arc.streak, 0);
+        assert_eq!(arc.streak_at_last_activation, 0);
+    }
+
+    #[test]
+    fn mid_zone_commit_neither_increments_nor_resets() {
+        let mut arc = arc_at_proximity(0.5);
+        arc.streak = 3;
+        arc.streak_at_last_activation = 1;
+        process_arc_commit(&mut arc);
+        assert_eq!(arc.streak, 3);
+        assert_eq!(arc.streak_at_last_activation, 1);
+    }
+
+    #[test]
+    fn commit_during_lockout_is_noop() {
+        let mut arc = arc_at_proximity(0.0);
+        arc.streak = 2;
+        arc.commit.in_lockout = true;
+        let before = arc.clone();
+        process_arc_commit(&mut arc);
+        assert_eq!(arc, before);
+    }
+
+    #[test]
+    fn any_commit_clears_idle_apex_counter() {
+        let mut arc = arc_at_proximity(0.5);
+        arc.apex_visits_since_commit = 1;
+        process_arc_commit(&mut arc);
+        assert_eq!(arc.apex_visits_since_commit, 0);
+    }
+
+    #[test]
+    fn two_idle_apex_visits_break_streak() {
+        // omega = π → period 2 s → two apex crossings per oscillation.
+        // Tick at 60 Hz across ~2.1 s of idle simulation.
+        let mut arc = ArcState::default();
+        arc.streak = 5;
+        arc.streak_at_last_activation = 5;
+        for _ in 0..130 {
+            tick_arc(&mut arc, 1.0 / 60.0);
+        }
+        assert_eq!(arc.streak, 0);
+        assert_eq!(arc.streak_at_last_activation, 0);
+    }
+
+    // ── Cube ─────────────────────────────────────────────────────────────────
+
+    use shared::components::minigame::cube::{CubeEdge, CubeState, CUBE_ROTATIONS_PER_ACTIVATION};
+
+    fn populated_active_cube() -> CubeState {
+        let mut cube = CubeState::default();
+        cube.active = true;
+        cube.rotations_remaining = CUBE_ROTATIONS_PER_ACTIVATION;
+        cube.current_face = [
+            Some(PhysicalBonus::BaseDamage(10.0)),
+            Some(PhysicalBonus::BaseDamage(10.0)),
+            Some(PhysicalBonus::BaseDamage(10.0)),
+        ];
+        cube
+    }
+
+    #[test]
+    fn activate_cube_initializes_state_and_preserves_streak() {
+        // Memory invariant: cube activation does NOT reset the running streak;
+        // it only snapshots the baseline for the next activation.
+        let mut arc = ArcState::default();
+        arc.streak = 4;
+        arc.commit.history.extend([0.5, 0.5, 0.5, 0.5]);
+        let mut cube = CubeState::default();
+
+        activate_cube(&mut cube, &mut arc);
+
+        assert!(cube.active);
+        assert_eq!(cube.fill_progress, 0.0);
+        assert_eq!(cube.rotations_remaining, CUBE_ROTATIONS_PER_ACTIVATION);
+        assert!(cube.current_face.iter().all(Option::is_some));
+        assert!(cube.collected.is_empty());
+        assert_eq!(arc.streak, 4, "streak must survive activation");
+        assert_eq!(arc.streak_at_last_activation, 4);
+    }
+
+    #[test]
+    fn collect_in_window_records_bonus_and_starts_animation() {
+        let mut cube = populated_active_cube();
+        cube.fill_progress = 1.0; // peak window — timing_precision == Some(1.0)
+
+        let ok = process_cube_collect(&mut cube, CubeEdge::Bottom);
+
+        assert!(ok);
+        assert_eq!(cube.collected.len(), 1);
+        assert_eq!(cube.rotating_edge, Some(CubeEdge::Bottom));
+        assert_eq!(cube.rotations_remaining, CUBE_ROTATIONS_PER_ACTIVATION - 1);
+        assert!(cube.new_face_pending);
+    }
+
+    #[test]
+    fn collect_outside_window_is_rejected() {
+        let mut cube = populated_active_cube();
+        cube.fill_progress = 0.5; // outside CUBE_COLLECT_WINDOW
+
+        let ok = process_cube_collect(&mut cube, CubeEdge::Bottom);
+
+        assert!(!ok);
+        assert!(cube.collected.is_empty());
+        assert!(cube.rotating_edge.is_none());
+    }
+
+    #[test]
+    fn collect_during_animation_is_rejected() {
+        let mut cube = populated_active_cube();
+        cube.fill_progress = 1.0;
+        cube.rotating_edge = Some(CubeEdge::Left); // animation in progress
+
+        let ok = process_cube_collect(&mut cube, CubeEdge::Bottom);
+
+        assert!(!ok);
+        assert_eq!(cube.collected.len(), 0);
+    }
+
+    #[test]
+    fn cancel_cube_clears_collected_and_deactivates() {
+        let mut cube = populated_active_cube();
+        cube.collected.push((PhysicalBonus::BaseDamage(5.0), 1.0));
+
+        cancel_cube(&mut cube);
+
+        assert!(!cube.active);
+        assert!(cube.collected.is_empty());
+        assert_eq!(cube.rotations_remaining, 0);
+    }
+}

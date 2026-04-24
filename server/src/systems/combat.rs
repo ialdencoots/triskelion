@@ -762,3 +762,152 @@ pub fn distribute_healing_threat(
         add_threat(&mut threat_list, healer, generated);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Pure-function coverage for the damage formula and threat math.
+    //!
+    //! `apply_damage_events` itself is not tested here: it consumes
+    //! Lightyear `MessageReader<DamageEvent>` and writes through
+    //! `MessageSender<…>`, which would require standing up the Lightyear
+    //! plugin stack to exercise. The gameplay-relevant logic — the formula,
+    //! the crit curve, threat accumulation — is all in the pure helpers
+    //! tested below; the system function itself is plumbing that breaks
+    //! loudly (compile errors) rather than silently.
+    use super::*;
+
+    fn dmg(base: f32, quality: f32, additive: f32, multipliers: f32) -> DamageEvent {
+        DamageEvent {
+            attacker: Entity::PLACEHOLDER,
+            target: Entity::PLACEHOLDER,
+            base,
+            ty: DamageType::Physical,
+            additive,
+            multipliers,
+            quality,
+            is_crit: false,
+        }
+    }
+
+    // ── resolve_damage ──────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_damage_baseline() {
+        // base=100, quality=1, no additive, no multiplier, no resist → 100.
+        let ev = dmg(100.0, 1.0, 0.0, 1.0);
+        assert_eq!(resolve_damage(&ev, 0.0), 100.0);
+    }
+
+    #[test]
+    fn resolve_damage_applies_quality_linearly() {
+        let ev = dmg(100.0, 0.5, 0.0, 1.0);
+        assert_eq!(resolve_damage(&ev, 0.0), 50.0);
+    }
+
+    #[test]
+    fn resolve_damage_applies_additive_then_multipliers() {
+        // 100 × 1.0 × (1 + 0.5) × 2.0 = 300.
+        let ev = dmg(100.0, 1.0, 0.5, 2.0);
+        assert_eq!(resolve_damage(&ev, 0.0), 300.0);
+    }
+
+    #[test]
+    fn resolve_damage_applies_resist() {
+        // 100 × (1 - 0.25) = 75.
+        let ev = dmg(100.0, 1.0, 0.0, 1.0);
+        assert_eq!(resolve_damage(&ev, 0.25), 75.0);
+    }
+
+    #[test]
+    fn resolve_damage_full_formula() {
+        // base=80, q=0.8, +0.25, ×1.5, resist 0.2:
+        // 80 × 0.8 × 1.25 × 1.5 × 0.8 = 96.0
+        let ev = dmg(80.0, 0.8, 0.25, 1.5);
+        let got = resolve_damage(&ev, 0.2);
+        assert!((got - 96.0).abs() < 1e-4, "got {got}");
+    }
+
+    #[test]
+    fn resolve_damage_clamps_to_zero_under_negative_multiplier() {
+        // Defensive: a negative multiplier (e.g. a buggy debuff stack) must
+        // never heal the target by going below zero damage.
+        let ev = dmg(100.0, 1.0, 0.0, -1.0);
+        assert_eq!(resolve_damage(&ev, 0.0), 0.0);
+    }
+
+    // ── crit_chance ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn crit_chance_below_threshold_is_zero() {
+        assert_eq!(crit_chance(0.0), 0.0);
+        assert_eq!(crit_chance(0.84), 0.0);
+    }
+
+    #[test]
+    fn crit_chance_at_threshold_is_zero_and_ramps_linearly() {
+        // At exactly the threshold the curve starts at 0%.
+        assert!(crit_chance(0.85).abs() < 1e-5);
+        // Midpoint of the shoulder → half of CRIT_SHOULDER_CHANCE.
+        let mid = 0.85 + (1.0 - 0.85) / 2.0;
+        assert!((crit_chance(mid) - CRIT_SHOULDER_CHANCE / 2.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn crit_chance_at_perfect_quality_is_one() {
+        // The discontinuity at q=1.0 is intentional — perfect commits always crit.
+        assert_eq!(crit_chance(1.0), 1.0);
+    }
+
+    // ── Threat math ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn effective_multiplier_with_no_bonuses_is_role_multiplier() {
+        let m = ThreatModifiers { role_multiplier: 2.0, bonuses: vec![] };
+        assert_eq!(m.effective_multiplier(), 2.0);
+    }
+
+    #[test]
+    fn effective_multiplier_sums_bonuses_additively() {
+        // role × (1 + Σbonuses) = 2.0 × (1 + 0.5 + 0.25) = 3.5
+        let m = ThreatModifiers {
+            role_multiplier: 2.0,
+            bonuses: vec![
+                ThreatBonus { multiplier: 0.5, expires_at: 0.0 },
+                ThreatBonus { multiplier: 0.25, expires_at: 0.0 },
+            ],
+        };
+        assert!((m.effective_multiplier() - 3.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn add_threat_creates_then_accumulates_and_marks_dirty() {
+        let mut list = ThreatList::default();
+        let a = Entity::from_raw_u32(1).unwrap();
+        let b = Entity::from_raw_u32(2).unwrap();
+        add_threat(&mut list, a, 10.0);
+        assert_eq!(list.entries.len(), 1);
+        assert_eq!(list.entries[0].threat, 10.0);
+        assert!(list.dirty);
+        list.dirty = false;
+
+        add_threat(&mut list, a, 5.0);
+        add_threat(&mut list, b, 7.0);
+        assert_eq!(list.entries.len(), 2);
+        let entry_a = list.entries.iter().find(|e| e.player_entity == a).unwrap();
+        assert_eq!(entry_a.threat, 15.0);
+        assert!(list.dirty);
+    }
+
+    #[test]
+    fn apply_damage_threat_credits_attacker_with_role_scaled_amount() {
+        let mut list = ThreatList::default();
+        let attacker = Entity::from_raw_u32(42).unwrap();
+        let mods = ThreatModifiers {
+            role_multiplier: 2.0, // Tank
+            bonuses: vec![],
+        };
+        apply_damage_threat(&mut list, attacker, 50.0, &mods);
+        assert_eq!(list.entries.len(), 1);
+        assert_eq!(list.entries[0].threat, 100.0); // 50 × 2.0
+    }
+}

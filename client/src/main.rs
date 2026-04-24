@@ -4,11 +4,6 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use lightyear::prelude::client::ClientPlugins;
 
-mod plugin;
-mod systems;
-mod ui;
-mod world;
-
 fn main() {
     App::new()
         .add_plugins((
@@ -25,7 +20,7 @@ fn main() {
             // Shared protocol: component/message/channel registration.
             shared::SharedPlugin,
             // Game-logic and UI systems.
-            plugin::ClientGamePlugin,
+            client::plugin::ClientGamePlugin,
         ))
         .run();
 }
