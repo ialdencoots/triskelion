@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::components::combat::DamageType;
+use crate::components::combat::{DamageType, DisruptionProfile};
 
 /// Server-local damage message. Emitted by any damage source (arc commit, DoT
 /// tick, future ability) and consumed by a single resolver system that applies
@@ -41,4 +41,13 @@ impl DamageEvent {
             is_crit: false,
         }
     }
+}
+
+/// Server-local disruption message. Fired alongside a `DamageEvent` whenever
+/// an enemy hit lands on a player; consumed by `apply_disruption_events`
+/// which fans out to whichever minigame component the target currently has.
+#[derive(Message, Clone, Debug)]
+pub struct DisruptionEvent {
+    pub target:  Entity,
+    pub profile: DisruptionProfile,
 }

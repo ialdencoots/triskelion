@@ -93,3 +93,79 @@ pub struct AbilityCooldowns {
     /// Delay before re-entering a stance after exiting one.
     pub stance_cd: f32,
 }
+
+// ── Enemy abilities ───────────────────────────────────────────────────────────
+
+/// Identifier for every enemy ability. The static parameter table lives in
+/// `server::systems::mob_defs::stats_for_ability`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AbilityKind {
+    /// Instant-resolve melee auto-attack: short cooldown, small Spike disruption.
+    MeleeAuto,
+    /// Telegraphed radius AoE centered on the locked target's position.
+    GroundSlam,
+}
+
+/// Shape of an attack resolution against the world.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum AttackShape {
+    /// Hits only the locked target entity.
+    Single,
+    /// Hits everyone within `radius` of the aim point.
+    Radius { radius: f32 },
+    /// Hits everyone within `range` and within `half_angle` of direction
+    /// from the attacker toward the aim point.
+    Cone { half_angle: f32 },
+}
+
+/// How an enemy picks whom to aim at when a cooldown becomes ready.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum TargetSelector {
+    /// Current top-of-threat (falls back to nearest if threat is empty).
+    TopThreat,
+    /// Everyone in the enemy's instance within range — for AoE abilities
+    /// that don't need a specific anchor target; the aim is the enemy itself.
+    AllInRange,
+}
+
+/// Sharp vs. sustained disruption. Each player class interprets these
+/// differently in `apply_disruption_events` — Spike produces a one-shot
+/// impulse, Sustained produces a decaying noise floor.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub enum DisruptionKind {
+    Spike,
+    Sustained,
+}
+
+/// Disruption payload carried by an attack. Magnitude is in [0.0, 1.0];
+/// class-specific scalars in `apply_disruption_events` convert to the
+/// right units (arc rad/s, heartbeat Hz, bar-fill proportion).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct DisruptionProfile {
+    pub kind:      DisruptionKind,
+    pub magnitude: f32,
+}
+
+/// Static per-ability parameters. Values come from the table in
+/// `server::systems::mob_defs::stats_for_ability`; this struct is the
+/// shared shape used by the server's ability tick systems.
+#[derive(Clone, Copy, Debug)]
+pub struct AbilityStats {
+    /// Seconds from cast start to resolve. 0 = instant (auto-attack).
+    pub telegraph:      f32,
+    /// Full cooldown after a clean resolve.
+    pub cooldown:       f32,
+    /// Cooldown after a line-of-sight break cancels a cast (shorter than
+    /// `cooldown` so the mob can re-attempt soon without being permanently
+    /// locked out by corner-kiting).
+    pub foiled_cd:      f32,
+    /// Cooldown after a player Interrupt cancels a cast (longer than
+    /// `cooldown` so Interrupt is a real punish).
+    pub interrupted_cd: f32,
+    pub range:          f32,
+    pub shape:          AttackShape,
+    pub selector:       TargetSelector,
+    pub damage:         f32,
+    pub ty:             DamageType,
+    pub disruption:     DisruptionProfile,
+}

@@ -3,19 +3,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Health, ReplicatedThreatList, Resistances};
-use shared::components::enemy::{EnemyMarker, EnemyPosition};
+use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, DisruptionKind, Health, ReplicatedThreatList, Resistances};
+use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
+use shared::components::minigame::bar_fill::BarFillState;
 use shared::components::minigame::cube::{CubeEdge, CubeState};
+use shared::components::minigame::heartbeat::HeartbeatState;
 use shared::components::player::{
-    PlayerId, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
+    GroupId, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
 };
 use shared::channels::GameChannel;
-use shared::events::combat::DamageEvent;
+use shared::events::combat::{DamageEvent, DisruptionEvent};
 use shared::inputs::PlayerInput;
 use shared::instances::{find_def, terrain_surface_y};
-use shared::messages::{DamageNumberMsg, SelectTargetMsg};
+use shared::messages::{CombatLogMsg, DamageNumberMsg, SelectTargetMsg};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::connection::PlayerEntityLink;
@@ -485,77 +487,170 @@ fn resolve_damage(ev: &DamageEvent, resist: f32) -> f32 {
     raw.max(0.0)
 }
 
-/// Consumes every queued `DamageEvent` and applies it: HP subtraction against
-/// the target's `Resistances`, threat credit to the attacker's list using
-/// their `ThreatModifiers`, and a broadcast `DamageNumberMsg` so every client
-/// can pop a floating number over the target.
+/// Consumes every queued `DamageEvent` and routes it by target kind. An event
+/// whose target is an enemy runs the player→enemy path (damage + threat credit +
+/// damage-number to attacker). An event whose target is a player runs the
+/// enemy→player path (damage only — no threat, no number yet). Friendly-fire
+/// is rejected: player→player and enemy→enemy events are dropped silently.
+///
+/// The `Without` filters on the two target queries make them provably disjoint
+/// so `&mut Health` on both compiles without a runtime conflict.
 pub fn apply_damage_events(
     mut messages: MessageReader<DamageEvent>,
-    mut target_query: Query<(&mut Health, &Resistances, Option<&mut ThreatList>, Option<&InstanceId>), With<EnemyMarker>>,
+    mut enemy_targets: Query<
+        (&mut Health, &Resistances, &mut ThreatList, Option<&InstanceId>),
+        (With<EnemyMarker>, Without<PlayerId>),
+    >,
+    mut player_targets: Query<
+        (&mut Health, Option<&Resistances>, Option<&InstanceId>),
+        (With<PlayerId>, Without<EnemyMarker>),
+    >,
     threat_mods_query: Query<&ThreatModifiers>,
-    attacker_instance_query: Query<&InstanceId>,
+    attacker_kind_query: Query<(Option<&PlayerId>, Option<&EnemyMarker>, Option<&InstanceId>)>,
+    player_name_query: Query<&PlayerName>,
+    enemy_name_query: Query<&EnemyName>,
+    group_query: Query<&GroupId>,
     mut number_senders: Query<(&PlayerEntityLink, &mut MessageSender<DamageNumberMsg>)>,
+    mut log_senders: Query<(&PlayerEntityLink, &mut MessageSender<CombatLogMsg>)>,
 ) {
     for ev in messages.read() {
-        let Ok((mut health, resist, threat_opt, target_inst)) = target_query.get_mut(ev.target) else {
-            info!("[DMG] target {:?} missing Health/Resistances (or not an enemy)", ev.target);
-            continue;
+        let (atk_is_player, atk_is_enemy, atk_inst) = match attacker_kind_query.get(ev.attacker) {
+            Ok((pid, em, inst)) => (pid.is_some(), em.is_some(), inst.map(|i| i.0)),
+            Err(_) => (false, false, None),
         };
-        if !health.is_alive() { continue; }
 
-        let r = resist.get(ev.ty);
-        let final_dmg = resolve_damage(ev, r);
-        health.current = (health.current - final_dmg).max(0.0);
-
-        debug!(
-            "[DMG] {:?}->{:?} ty={:?} base={:.1} q={:.2} +{:.2} x{:.2} resist={:.2} final={:.1} hp={:.1}/{:.1}",
-            ev.attacker, ev.target, ev.ty, ev.base, ev.quality, ev.additive, ev.multipliers,
-            r, final_dmg, health.current, health.max,
-        );
-
-        match threat_opt {
-            None => {
-                warn!("[DMG] target {:?} has no ThreatList — skipping threat", ev.target);
-            }
-            Some(mut tl) => {
-                match threat_mods_query.get(ev.attacker) {
-                    Err(_) => {
-                        warn!("[DMG] attacker {:?} has no ThreatModifiers — skipping threat", ev.attacker);
-                    }
-                    Ok(mods) => {
-                        apply_damage_threat(&mut tl, ev.attacker, final_dmg, mods);
-                    }
-                }
-            }
-        }
-
-        // Floating damage numbers are a personal cue — send only to the
-        // attacker's client. Other players will see the hit through the
-        // forthcoming combat log, not as a world-space popup.
-        //
-        // Suppress the number when attacker and target are in different
-        // instances (e.g. a DoT the attacker applied before leaving the
-        // instance is still ticking on the old target). Without this the
-        // attacker keeps seeing damage numbers pop from enemies in a scene
-        // they no longer occupy.
-        let attacker_inst = attacker_instance_query.get(ev.attacker).ok().map(|i| i.0);
-        let target_inst = target_inst.map(|i| i.0);
-        if let (Some(a), Some(t)) = (attacker_inst, target_inst) {
-            if a != t {
+        // ── Player → Enemy ─────────────────────────────────────────────────
+        if let Ok((mut health, resist, mut threat_list, target_inst))
+            = enemy_targets.get_mut(ev.target)
+        {
+            if !atk_is_player {
+                // Enemy-on-enemy isn't a feature yet; drop silently.
                 continue;
             }
+            if !health.is_alive() { continue; }
+
+            let r = resist.get(ev.ty);
+            let final_dmg = resolve_damage(ev, r);
+            health.current = (health.current - final_dmg).max(0.0);
+
+            debug!(
+                "[DMG] P->E {:?}->{:?} ty={:?} base={:.1} q={:.2} +{:.2} x{:.2} resist={:.2} final={:.1} hp={:.1}/{:.1}",
+                ev.attacker, ev.target, ev.ty, ev.base, ev.quality, ev.additive, ev.multipliers,
+                r, final_dmg, health.current, health.max,
+            );
+
+            if let Ok(mods) = threat_mods_query.get(ev.attacker) {
+                apply_damage_threat(&mut threat_list, ev.attacker, final_dmg, mods);
+            } else {
+                warn!("[DMG] attacker {:?} has no ThreatModifiers — skipping threat", ev.attacker);
+            }
+
+            broadcast_combat_log(
+                ev.attacker, ev.target, final_dmg, ev.ty, ev.is_crit, true,
+                &player_name_query, &enemy_name_query, &group_query, &mut log_senders,
+            );
+
+            // Damage numbers: personal cue to the attacker only. Suppress
+            // cross-instance (a DoT applied before leaving keeps ticking on
+            // the old target; we don't want stale numbers popping in the
+            // attacker's new scene).
+            let tinst = target_inst.map(|i| i.0);
+            if let (Some(a), Some(t)) = (atk_inst, tinst) {
+                if a != t { continue; }
+            }
+            let payload = DamageNumberMsg {
+                target: ev.target,
+                amount: final_dmg,
+                ty: ev.ty,
+                is_crit: ev.is_crit,
+            };
+            for (link, mut sender) in number_senders.iter_mut() {
+                if link.0 == ev.attacker {
+                    sender.send::<GameChannel>(payload.clone());
+                    break;
+                }
+            }
+            continue;
         }
 
-        let payload = DamageNumberMsg {
-            target: ev.target,
-            amount: final_dmg,
-            ty: ev.ty,
-            is_crit: ev.is_crit,
-        };
-        for (link, mut sender) in number_senders.iter_mut() {
-            if link.0 == ev.attacker {
+        // ── Enemy → Player ─────────────────────────────────────────────────
+        if let Ok((mut health, resist_opt, _target_inst))
+            = player_targets.get_mut(ev.target)
+        {
+            if !atk_is_enemy {
+                // Friendly fire (player→player) — reject.
+                continue;
+            }
+            if !health.is_alive() { continue; }
+
+            let r = resist_opt.map(|r| r.get(ev.ty)).unwrap_or(0.0);
+            let final_dmg = resolve_damage(ev, r);
+            health.current = (health.current - final_dmg).max(0.0);
+
+            debug!(
+                "[DMG] E->P {:?}->{:?} ty={:?} base={:.1} resist={:.2} final={:.1} hp={:.1}/{:.1}",
+                ev.attacker, ev.target, ev.ty, ev.base, r, final_dmg, health.current, health.max,
+            );
+
+            broadcast_combat_log(
+                ev.attacker, ev.target, final_dmg, ev.ty, ev.is_crit, false,
+                &player_name_query, &enemy_name_query, &group_query, &mut log_senders,
+            );
+            continue;
+        }
+
+        // Target is neither a live enemy nor a live player entity. Most
+        // likely a stale reference (despawned mid-tick). Drop silently.
+    }
+}
+
+/// Resolve an entity to a display name. Players carry `PlayerName`, enemies
+/// carry `EnemyName`. Falls back to "?" for entities with neither — shouldn't
+/// happen for real damage sources but defensible for stale references.
+fn display_name(
+    e: Entity,
+    players: &Query<&PlayerName>,
+    enemies: &Query<&EnemyName>,
+) -> String {
+    if let Ok(n) = players.get(e) { return n.0.clone(); }
+    if let Ok(n) = enemies.get(e) { return n.0.clone(); }
+    "?".to_string()
+}
+
+/// Send a `CombatLogMsg` to every player whose `GroupId` matches either the
+/// attacker's or the target's group. Enemies have no `GroupId`, so an
+/// enemy-attacker / enemy-target contributes nothing from its own side — but
+/// as long as the *other* side is a player, that side's whole party receives
+/// the log entry.
+fn broadcast_combat_log(
+    attacker: Entity,
+    target: Entity,
+    amount: f32,
+    ty: DamageType,
+    is_crit: bool,
+    attacker_is_player: bool,
+    player_names: &Query<&PlayerName>,
+    enemy_names: &Query<&EnemyName>,
+    groups: &Query<&GroupId>,
+    senders: &mut Query<(&PlayerEntityLink, &mut MessageSender<CombatLogMsg>)>,
+) {
+    let a_group = groups.get(attacker).ok().map(|g| g.0);
+    let t_group = groups.get(target).ok().map(|g| g.0);
+    if a_group.is_none() && t_group.is_none() { return; }
+
+    let payload = CombatLogMsg {
+        attacker_name: display_name(attacker, player_names, enemy_names),
+        target_name:   display_name(target,   player_names, enemy_names),
+        amount,
+        ty,
+        is_crit,
+        attacker_is_player,
+    };
+
+    for (link, mut sender) in senders.iter_mut() {
+        if let Ok(g) = groups.get(link.0) {
+            if Some(g.0) == a_group || Some(g.0) == t_group {
                 sender.send::<GameChannel>(payload.clone());
-                break;
             }
         }
     }
@@ -600,6 +695,54 @@ pub fn tick_dots(
             }
             dot.remaining_ticks > 0
         });
+    }
+}
+
+// ── Disruption resolution ────────────────────────────────────────────────────
+
+/// Arc `disruption_velocity` per unit of Spike magnitude — tuned so a small
+/// auto-attack (magnitude 0.15) produces a perceptible wobble on the dot and
+/// a full GroundSlam (magnitude 0.9) briefly throws it off rhythm.
+const SPIKE_ARC: f32 = 3.0;
+/// Arc drift per unit of Sustained magnitude. Smaller than Spike — sustained
+/// disruption is meant to be an ambient noise floor, not a punch.
+const DRIFT_ARC: f32 = 0.8;
+/// Heartbeat frequency spike (Hz) per unit of Spike magnitude.
+const SPIKE_HB: f32 = 0.6;
+/// Heartbeat envelope noise amplitude per unit of Sustained magnitude.
+const NOISE_HB: f32 = 0.25;
+/// Bar-fill drain per unit of magnitude (both Spike and Sustained — drain
+/// is a single mechanic; magnitude gates size).
+const DRAIN_BF: f32 = 0.35;
+
+/// Consume every queued `DisruptionEvent` and apply it to whichever minigame
+/// component the target currently has. Each player's active stance only has
+/// one primary minigame component, so at most one branch fires per event.
+/// Arc's `disruption_velocity` sign is intentionally unchanged (additive) —
+/// accumulates counter-directional impulses.
+pub fn apply_disruption_events(
+    mut messages: MessageReader<DisruptionEvent>,
+    mut arcs:       Query<&mut ArcState>,
+    mut heartbeats: Query<&mut HeartbeatState>,
+    mut bars:       Query<&mut BarFillState>,
+) {
+    for ev in messages.read() {
+        let mag = ev.profile.magnitude;
+        if let Ok(mut arc) = arcs.get_mut(ev.target) {
+            match ev.profile.kind {
+                DisruptionKind::Spike     => arc.disruption_velocity += SPIKE_ARC * mag,
+                DisruptionKind::Sustained => arc.disruption_velocity += DRIFT_ARC * mag,
+            }
+        }
+        if let Ok(mut hb) = heartbeats.get_mut(ev.target) {
+            match ev.profile.kind {
+                DisruptionKind::Spike     => hb.frequency_spike += SPIKE_HB * mag,
+                DisruptionKind::Sustained => hb.envelope_noise  += NOISE_HB * mag,
+            }
+        }
+        if let Ok(mut bf) = bars.get_mut(ev.target) {
+            bf.drain_pending += DRAIN_BF * mag;
+        }
     }
 }
 

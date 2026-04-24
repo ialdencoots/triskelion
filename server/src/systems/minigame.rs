@@ -287,7 +287,25 @@ pub fn tick_cube_states(
 /// - Advance `fill` using `fill_rate(p) = base_rate * p^fill_exponent`.
 /// - On auto-reset (fill >= 1.0): generate new bonus markers and reset fill to 0.
 /// - Decay `arcane_pool` by `pool_decay_rate * dt`.
-pub fn tick_bar_fill_states(time: Res<Time>, mut query: Query<&mut BarFillState>) {}
+/// - Consume `drain_pending` from `fill` first, spilling overflow into
+///   `arcane_pool` (negative — reducing banked pool). Drain spreads over
+///   ~0.3 s so it reads as a rapid-but-visible dip rather than a snap.
+pub fn tick_bar_fill_states(time: Res<Time>, mut query: Query<&mut BarFillState>) {
+    const DRAIN_RATE: f32 = 1.0 / 0.3;
+    let dt = time.delta_secs();
+    for mut bf in query.iter_mut() {
+        if bf.drain_pending > 0.0 {
+            let drain_this_tick = (bf.drain_pending * DRAIN_RATE * dt).min(bf.drain_pending);
+            bf.drain_pending -= drain_this_tick;
+            let from_fill = drain_this_tick.min(bf.fill);
+            bf.fill -= from_fill;
+            let leftover = drain_this_tick - from_fill;
+            if leftover > 0.0 {
+                bf.arcane_pool = (bf.arcane_pool - leftover).max(0.0);
+            }
+        }
+    }
+}
 
 /// Advance all active Wave Interference states by one server tick.
 ///
@@ -319,4 +337,15 @@ pub fn tick_value_lock_states(time: Res<Time>, mut query: Query<&mut ValueLockSt
 /// - Advance `phase` by `current_frequency * dt`, wrapping at 1.0.
 /// - Decay `envelope_noise`.
 /// - Release lockout at phase midpoint (0.5).
-pub fn tick_heartbeat_states(time: Res<Time>, mut query: Query<&mut HeartbeatState>) {}
+///
+/// MVP scope: full phase/frequency simulation is deferred. This tick only
+/// decays the two disruption fields so they don't accumulate indefinitely.
+/// `frequency_spike` decays fast (1 s); `envelope_noise` decays slower (3 s)
+/// to match the "sustained noise floor" design.
+pub fn tick_heartbeat_states(time: Res<Time>, mut query: Query<&mut HeartbeatState>) {
+    let dt = time.delta_secs();
+    for mut hb in query.iter_mut() {
+        hb.frequency_spike *= (-dt / 1.0_f32).exp();
+        hb.envelope_noise  *= (-dt / 3.0_f32).exp();
+    }
+}

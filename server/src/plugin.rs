@@ -28,8 +28,11 @@ impl Plugin for ServerGamePlugin {
         app.add_observer(connection::on_client_disconnected);
 
         // Combat and minigame tick in FixedUpdate for deterministic simulation.
-        // Damage flow: emitters (process_player_inputs, tick_dots) run before
-        // the apply_damage_events resolver so events are drained same-tick.
+        // Damage flow: emitters (process_player_inputs, tick_dots, enemy
+        // ability/cast systems) run before the apply_damage_events resolver
+        // so events are drained same-tick. apply_disruption_events consumes
+        // DisruptionEvent messages after damage is applied — the minigame
+        // ticks that follow then simulate on the updated state.
         app.add_systems(
             FixedUpdate,
             (
@@ -42,7 +45,16 @@ impl Plugin for ServerGamePlugin {
                 (
                     combat::process_player_inputs,
                     combat::tick_dots,
+                    // tick_enemy_casts runs before tick_enemy_abilities so
+                    // resolving a cast this tick doesn't prevent the mob
+                    // from initiating new actions until the next tick (the
+                    // remove<EnemyCast> command flushes at the next sync
+                    // point regardless, so this is correctness-neutral —
+                    // the order just makes the data flow read naturally).
+                    enemy::tick_enemy_casts,
+                    enemy::tick_enemy_abilities,
                     combat::apply_damage_events,
+                    combat::apply_disruption_events,
                 ).chain(),
                 combat::process_target_selections,
                 combat::tick_ability_cooldowns,

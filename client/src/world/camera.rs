@@ -2,6 +2,8 @@ use avian3d::prelude::*;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 
+use crate::ui::hud::combat_log::UiPointerGuard;
+
 use super::terrain::PlayerMarker;
 
 #[derive(Resource)]
@@ -26,6 +28,7 @@ pub fn update_orbit_camera(
     mouse_motion: Res<AccumulatedMouseMotion>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    pointer_guard: Res<UiPointerGuard>,
     player_query: Query<(Entity, &Transform), With<PlayerMarker>>,
     camera_query: Query<Entity, With<OrbitCamera>>,
     spatial_query: SpatialQuery,
@@ -45,7 +48,11 @@ pub fn update_orbit_camera(
         orbit.pitch = (orbit.pitch - mouse_motion.delta.y * 0.005).clamp(-1.5, 1.5);
     }
 
-    orbit.distance = (orbit.distance - mouse_scroll.delta.y * 1.5).clamp(0.0, 50.0);
+    // Skip wheel-zoom when a UI element is consuming scroll (combat log
+    // hover). `blocks_camera_zoom` is set every frame by the UI scroll handler.
+    if !pointer_guard.blocks_camera_zoom {
+        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 1.5).clamp(0.0, 50.0);
+    }
 
     let Ok((player_entity, player_tf)) = player_query.single() else { return };
     let Ok(camera_entity) = camera_query.single() else { return };

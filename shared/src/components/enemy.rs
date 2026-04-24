@@ -57,3 +57,38 @@ pub struct EnemyVelocity {
 /// Replicated so clients can display target-of-target when inspecting a mob.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct MobTarget(pub Option<u64>);
+
+/// An enemy's in-flight telegraphed cast. Replicated so clients can render
+/// the telegraph geometry (ring for Radius, line for Single, cone for Cone).
+/// Server inserts at cast start, despawns on resolve / LoS break / interrupt.
+///
+/// Fields use individual floats for the aim point to match `EnemyPosition`,
+/// avoiding the `bevy/serialize` feature flag that `Vec3: Serialize` needs.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct EnemyCast {
+    pub ability:  crate::components::combat::AbilityKind,
+    /// Shape of the attack at resolve. Replicated (in addition to being
+    /// implicit in `ability`) so the client can render the correct telegraph
+    /// without mirroring the server's ability parameter table.
+    pub shape:    crate::components::combat::AttackShape,
+    /// PlayerId of the target locked at cast start. Clients may highlight
+    /// this player specifically. Zero means "no single target" (AllInRange).
+    pub target:   u64,
+    /// Aim point in world space — snapshot of the target's position at cast
+    /// start. AoE shapes resolve against this, not against the target's
+    /// live position, so kiting after the cast starts doesn't move the hit.
+    pub aim_x:    f32,
+    pub aim_y:    f32,
+    pub aim_z:    f32,
+    pub elapsed:  f32,
+    pub duration: f32,
+}
+
+/// Server-only cooldown tracking for an enemy's abilities. Parallel to the
+/// `MobStats.specials` list: index i here tracks the cooldown of
+/// `MobStats.specials[i]`. Auto-attack gets its own dedicated field.
+#[derive(Component, Debug, Default)]
+pub struct EnemyAbilityCooldowns {
+    pub auto_cd:     f32,
+    pub specials_cd: Vec<f32>,
+}

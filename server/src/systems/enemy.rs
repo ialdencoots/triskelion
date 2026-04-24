@@ -1,16 +1,21 @@
 use bevy::prelude::*;
 use lightyear::prelude::server::*;
 
-use shared::components::combat::Health;
-use shared::components::enemy::{EnemyPosition, EnemyVelocity, MobTarget};
+use shared::components::combat::{
+    AttackShape, Health, TargetSelector,
+};
+use shared::components::enemy::{
+    EnemyAbilityCooldowns, EnemyCast, EnemyPosition, EnemyVelocity, MobTarget,
+};
 use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition};
+use shared::events::combat::{DamageEvent, DisruptionEvent};
 use shared::instances::{find_def, layout_sdf, terrain_surface_y, InstanceKind};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::combat::{ThreatEntry, ThreatList};
 use super::instances::{create_instance, InstanceRegistry};
-use super::mob_defs::MobBehavior;
+use super::mob_defs::{stats_for_ability, stats_for_kind, MobBehavior, MobKindComp};
 use crate::util::cmp_f32;
 
 /// Threat seeded when a mob first aggros onto a player, before any damage is
@@ -298,4 +303,320 @@ pub fn tick_enemy_walk(
             pos.z = new_z;
         }
     }
+}
+
+// ── Ability execution ────────────────────────────────────────────────────────
+
+/// Clearance above the sight line a terrain sample may occupy before LoS is
+/// considered blocked. Values in world units. Set generously so rolling hills
+/// don't eat every cast — only real ridges/walls break LoS.
+const LOS_CLEARANCE: f32 = 0.8;
+/// Number of terrain samples taken along the sight line. More = finer
+/// detection of sharp ridges, at small cost per cast per tick.
+const LOS_SAMPLES: usize = 5;
+
+/// Return true if the ray from `ax,ay,az` to `bx,by,bz` is unobstructed by
+/// terrain in the given instance. Samples terrain height at LOS_SAMPLES
+/// interior points along the line and blocks if any sample rises above the
+/// interpolated sight line by more than LOS_CLEARANCE. Layout-instance
+/// walls (crystal caverns corridors) are not yet considered — treated as
+/// open. Returns true outside any known instance.
+fn has_los(
+    reg: &InstanceRegistry,
+    iid: u32,
+    ax: f32, ay: f32, az: f32,
+    bx: f32, by: f32, bz: f32,
+) -> bool {
+    let Some(live) = reg.instances.get(&iid) else { return true };
+    let def = find_def(live.kind);
+    for i in 1..LOS_SAMPLES {
+        let t = i as f32 / LOS_SAMPLES as f32;
+        let sx = ax + (bx - ax) * t;
+        let sy = ay + (by - ay) * t;
+        let sz = az + (bz - az) * t;
+        let terrain = terrain_surface_y(&live.noise, sx, sz, def);
+        if terrain > sy + LOS_CLEARANCE {
+            return false;
+        }
+    }
+    true
+}
+
+/// Picks the top-threat player entity in the given instance from a threat list.
+/// Returns `None` if the list is empty or no entry resolves to a live player
+/// in the mob's instance.
+fn top_threat_target<'a>(
+    threat_list: &ThreatList,
+    mob_iid: u32,
+    player_query: &'a Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+) -> Option<(Entity, u64, f32, f32, f32)> {
+    threat_list.entries.iter()
+        .max_by(|a, b| cmp_f32(a.threat, b.threat))
+        .and_then(|entry| {
+            let (e, pid, ppos, piid, health) = player_query.get(entry.player_entity).ok()?;
+            if piid.0 != mob_iid || !health.is_alive() { return None; }
+            Some((e, pid.0, ppos.x, ppos.y, ppos.z))
+        })
+}
+
+/// Tick every enemy's ability cooldowns and, if no cast is active, potentially
+/// fire an auto-attack and/or initiate a telegraphed special move.
+///
+/// Auto-attacks resolve instantly; they write `DamageEvent` + `DisruptionEvent`
+/// and reset `auto_cd`. Special moves are initiated by inserting an
+/// `EnemyCast` component; resolution is handled by `tick_enemy_casts`.
+pub fn tick_enemy_abilities(
+    time: Res<Time>,
+    mut commands: Commands,
+    reg: Res<InstanceRegistry>,
+    mut mob_query: Query<(
+        Entity,
+        &MobKindComp,
+        &EnemyPosition,
+        &InstanceId,
+        &ThreatList,
+        &mut EnemyAbilityCooldowns,
+        Option<&EnemyCast>,
+    )>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut disruption_writer: MessageWriter<DisruptionEvent>,
+) {
+    let dt = time.delta_secs();
+
+    for (mob_entity, kind_comp, mob_pos, mob_iid, threat_list, mut cooldowns, cast_opt)
+        in mob_query.iter_mut()
+    {
+        cooldowns.auto_cd = (cooldowns.auto_cd - dt).max(0.0);
+        for cd in cooldowns.specials_cd.iter_mut() {
+            *cd = (*cd - dt).max(0.0);
+        }
+
+        // A mob in the middle of a telegraphed cast doesn't auto-attack and
+        // doesn't initiate new casts — it's committed until resolve or cancel.
+        if cast_opt.is_some() { continue; }
+
+        let stats = stats_for_kind(kind_comp.0);
+        let top = top_threat_target(threat_list, mob_iid.0, &player_query);
+
+        // ── Auto-attack ────────────────────────────────────────────────────
+        if cooldowns.auto_cd <= 0.0 {
+            if let Some((target_entity, _pid, tx, ty, tz)) = top {
+                let dx = tx - mob_pos.x;
+                let dz = tz - mob_pos.z;
+                let dist = (dx * dx + dz * dz).sqrt();
+                let auto_stats = stats_for_ability(stats.auto_attack);
+                let reach = stats.melee_range.max(auto_stats.range);
+                if dist <= reach
+                    && has_los(&reg, mob_iid.0, mob_pos.x, mob_pos.y, mob_pos.z, tx, ty, tz)
+                {
+                    damage_writer.write(DamageEvent {
+                        attacker:    mob_entity,
+                        target:      target_entity,
+                        base:        auto_stats.damage,
+                        ty:          auto_stats.ty,
+                        additive:    0.0,
+                        multipliers: 1.0,
+                        quality:     1.0,
+                        is_crit:     false,
+                    });
+                    disruption_writer.write(DisruptionEvent {
+                        target:  target_entity,
+                        profile: auto_stats.disruption,
+                    });
+                    cooldowns.auto_cd = auto_stats.cooldown;
+                }
+            }
+        }
+
+        // ── Special-move initiation ────────────────────────────────────────
+        // Scan in order; the first ready ability whose preconditions pass
+        // locks in. One cast per mob at a time.
+        for (i, ability) in stats.specials.iter().copied().enumerate() {
+            if cooldowns.specials_cd[i] > 0.0 { continue; }
+            let a_stats = stats_for_ability(ability);
+
+            let (target_pid, aim_x, aim_y, aim_z) = match a_stats.selector {
+                TargetSelector::TopThreat => {
+                    let Some((_, pid, tx, ty, tz)) = top else { continue };
+                    let dx = tx - mob_pos.x;
+                    let dz = tz - mob_pos.z;
+                    let dist = (dx * dx + dz * dz).sqrt();
+                    if dist > a_stats.range { continue; }
+                    if !has_los(&reg, mob_iid.0, mob_pos.x, mob_pos.y, mob_pos.z, tx, ty, tz) {
+                        continue;
+                    }
+                    (pid, tx, ty, tz)
+                }
+                TargetSelector::AllInRange => {
+                    // Anchor the aim at the enemy itself — the resolve
+                    // sphere/cone is centered on the mob for untargeted AoE.
+                    (0u64, mob_pos.x, mob_pos.y, mob_pos.z)
+                }
+            };
+
+            commands.entity(mob_entity).insert(EnemyCast {
+                ability,
+                shape:    a_stats.shape,
+                target:   target_pid,
+                aim_x,
+                aim_y,
+                aim_z,
+                elapsed:  0.0,
+                duration: a_stats.telegraph,
+            });
+            cooldowns.specials_cd[i] = a_stats.cooldown;
+            break;
+        }
+    }
+}
+
+/// Advance any active `EnemyCast` on an enemy. Each tick:
+/// 1. Increment `elapsed`.
+/// 2. Re-check LoS to the target player (for TopThreat casts). If blocked →
+///    cancel the cast and lower its cooldown to `foiled_cd`.
+/// 3. If `elapsed >= duration`, resolve the attack at the locked aim point
+///    per its `AttackShape` and remove the `EnemyCast` component.
+pub fn tick_enemy_casts(
+    time: Res<Time>,
+    mut commands: Commands,
+    reg: Res<InstanceRegistry>,
+    mut cast_query: Query<(
+        Entity,
+        &MobKindComp,
+        &EnemyPosition,
+        &InstanceId,
+        &mut EnemyCast,
+        &mut EnemyAbilityCooldowns,
+    )>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    mut damage_writer: MessageWriter<DamageEvent>,
+    mut disruption_writer: MessageWriter<DisruptionEvent>,
+) {
+    let dt = time.delta_secs();
+
+    for (mob_entity, kind_comp, mob_pos, mob_iid, mut cast, mut cooldowns)
+        in cast_query.iter_mut()
+    {
+        cast.elapsed += dt;
+
+        let ability_stats = stats_for_ability(cast.ability);
+        let stats = stats_for_kind(kind_comp.0);
+
+        // Resolve cast.target (PlayerId) to current player data for LoS / Single resolve.
+        // Non-zero target means a specific player; zero = AoE anchored on the enemy.
+        let locked_player = if cast.target != 0 {
+            player_query.iter()
+                .find(|(_, pid, _, piid, _)| pid.0 == cast.target && piid.0 == mob_iid.0)
+                .map(|(e, _, ppos, _, health)| (e, ppos.x, ppos.y, ppos.z, health.is_alive()))
+        } else {
+            None
+        };
+
+        // LoS check: only applies to casts with a specific locked player.
+        let los_ok = if cast.target == 0 {
+            true
+        } else {
+            match locked_player {
+                Some((_, px, py, pz, alive)) if alive => {
+                    has_los(&reg, mob_iid.0, mob_pos.x, mob_pos.y, mob_pos.z, px, py, pz)
+                }
+                _ => false,
+            }
+        };
+
+        if !los_ok {
+            if let Some(i) = stats.specials.iter().position(|&k| k == cast.ability) {
+                if i < cooldowns.specials_cd.len() {
+                    cooldowns.specials_cd[i] = ability_stats.foiled_cd;
+                }
+            }
+            commands.entity(mob_entity).remove::<EnemyCast>();
+            continue;
+        }
+
+        if cast.elapsed < cast.duration { continue; }
+
+        // ── Resolve ────────────────────────────────────────────────────────
+        let aim_x = cast.aim_x;
+        let aim_z = cast.aim_z;
+
+        match ability_stats.shape {
+            AttackShape::Single => {
+                if let Some((pent, _, _, _, alive)) = locked_player {
+                    if alive {
+                        emit_attack_hit(
+                            mob_entity, pent, &ability_stats,
+                            &mut damage_writer, &mut disruption_writer,
+                        );
+                    }
+                }
+            }
+            AttackShape::Radius { radius } => {
+                let r2 = radius * radius;
+                for (pent, _pid, ppos, piid, health) in player_query.iter() {
+                    if piid.0 != mob_iid.0 || !health.is_alive() { continue; }
+                    let dx = ppos.x - aim_x;
+                    let dz = ppos.z - aim_z;
+                    if dx * dx + dz * dz <= r2 {
+                        emit_attack_hit(
+                            mob_entity, pent, &ability_stats,
+                            &mut damage_writer, &mut disruption_writer,
+                        );
+                    }
+                }
+            }
+            AttackShape::Cone { half_angle } => {
+                let fwd = Vec3::new(aim_x - mob_pos.x, 0.0, aim_z - mob_pos.z)
+                    .normalize_or_zero();
+                if fwd == Vec3::ZERO {
+                    commands.entity(mob_entity).remove::<EnemyCast>();
+                    continue;
+                }
+                let cos_min = half_angle.cos();
+                for (pent, _pid, ppos, piid, health) in player_query.iter() {
+                    if piid.0 != mob_iid.0 || !health.is_alive() { continue; }
+                    let dx = ppos.x - mob_pos.x;
+                    let dz = ppos.z - mob_pos.z;
+                    let dist_sq = dx * dx + dz * dz;
+                    if dist_sq > ability_stats.range * ability_stats.range { continue; }
+                    let to = Vec3::new(dx, 0.0, dz).normalize_or_zero();
+                    if fwd.dot(to) >= cos_min {
+                        emit_attack_hit(
+                            mob_entity, pent, &ability_stats,
+                            &mut damage_writer, &mut disruption_writer,
+                        );
+                    }
+                }
+            }
+        }
+
+        commands.entity(mob_entity).remove::<EnemyCast>();
+    }
+}
+
+/// Write the damage + disruption pair for one resolved enemy hit. Quality is
+/// hard-coded to 1.0 because enemies don't have minigame commit quality —
+/// the ability's `damage` field is already the post-quality number.
+fn emit_attack_hit(
+    attacker: Entity,
+    target: Entity,
+    stats: &shared::components::combat::AbilityStats,
+    damage_writer: &mut MessageWriter<DamageEvent>,
+    disruption_writer: &mut MessageWriter<DisruptionEvent>,
+) {
+    damage_writer.write(DamageEvent {
+        attacker,
+        target,
+        base:        stats.damage,
+        ty:          stats.ty,
+        additive:    0.0,
+        multipliers: 1.0,
+        quality:     1.0,
+        is_crit:     false,
+    });
+    disruption_writer.write(DisruptionEvent {
+        target,
+        profile: stats.disruption,
+    });
 }

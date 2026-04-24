@@ -2,13 +2,25 @@ use bevy::prelude::*;
 use lightyear::prelude::Replicate;
 use lightyear::connection::network_target::NetworkTarget;
 
-use shared::components::combat::{Health, ReplicatedThreatList, Resistances};
-use shared::components::enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget};
+use shared::components::combat::{
+    AbilityKind, AbilityStats, AttackShape, DamageType, DisruptionKind, DisruptionProfile,
+    Health, ReplicatedThreatList, Resistances, TargetSelector,
+};
+use shared::components::enemy::{
+    BossMarker, EnemyAbilityCooldowns, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity,
+    MobTarget,
+};
 use shared::components::instance::InstanceId;
 use shared::instances::MobKind;
 use shared::settings::{BOSS_FLOAT_HEIGHT, PLAYER_FLOAT_HEIGHT};
 
 use super::combat::ThreatList;
+
+/// Server-only component that tags each spawned mob with its `MobKind` so
+/// ability tick systems can look up `stats_for_kind` without replicating
+/// the kind enum to clients.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct MobKindComp(pub MobKind);
 
 /// Server-only AI behavior (never replicated).
 #[derive(Component)]
@@ -26,27 +38,63 @@ pub enum MobBehavior {
     Aggro { aggro_range: f32, melee_range: f32 },
 }
 
-struct MobStats {
-    name:         &'static str,
-    max_health:   f32,
+pub struct MobStats {
+    pub name:         &'static str,
+    pub max_health:   f32,
     /// Y offset from terrain floor to capsule center (radius + half_cyl + 0.2 gap).
-    floor_offset: f32,
-    aggro_range:  f32,
-    melee_range:  f32,
-    patrol:       bool,
+    pub floor_offset: f32,
+    pub aggro_range:  f32,
+    pub melee_range:  f32,
+    pub patrol:       bool,
     /// Per-type damage reduction in [0.0, 0.75]. Clamped by `Resistances::new`.
-    resist_physical: f32,
-    resist_arcane:   f32,
-    resist_nature:   f32,
+    pub resist_physical: f32,
+    pub resist_arcane:   f32,
+    pub resist_nature:   f32,
+    /// Always-present auto-attack ability. All mobs have one.
+    pub auto_attack:  AbilityKind,
+    /// Optional special abilities. Index-aligned with `EnemyAbilityCooldowns.specials_cd`.
+    pub specials:     &'static [AbilityKind],
 }
 
-fn stats_for_kind(kind: MobKind) -> MobStats {
+pub fn stats_for_kind(kind: MobKind) -> MobStats {
     match kind {
-        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  8.0, melee_range: 1.5, patrol: true,  resist_physical: 0.0, resist_arcane: 0.0, resist_nature: 0.0 },
-        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 10.0, melee_range: 1.8, patrol: true,  resist_physical: 0.2, resist_arcane: 0.0, resist_nature: 0.0 },
-        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  7.0, melee_range: 2.0, patrol: true,  resist_physical: 0.3, resist_arcane: 0.1, resist_nature: 0.0 },
-        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 12.0, melee_range: 2.0, patrol: false, resist_physical: 0.5, resist_arcane: 0.0, resist_nature: 0.3 },
-        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: BOSS_FLOAT_HEIGHT,   aggro_range: 16.0, melee_range: 3.0, patrol: false, resist_physical: 0.6, resist_arcane: 0.2, resist_nature: 0.4 },
+        MobKind::Goblin           => MobStats { name: "Goblin",             max_health:    80.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  8.0, melee_range: 1.5, patrol: true,  resist_physical: 0.0, resist_arcane: 0.0, resist_nature: 0.0, auto_attack: AbilityKind::MeleeAuto, specials: &[] },
+        MobKind::Orc              => MobStats { name: "Orc",                max_health:   120.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 10.0, melee_range: 1.8, patrol: true,  resist_physical: 0.2, resist_arcane: 0.0, resist_nature: 0.0, auto_attack: AbilityKind::MeleeAuto, specials: &[] },
+        MobKind::Troll            => MobStats { name: "Troll",              max_health:   200.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range:  7.0, melee_range: 2.0, patrol: true,  resist_physical: 0.3, resist_arcane: 0.1, resist_nature: 0.0, auto_attack: AbilityKind::MeleeAuto, specials: &[AbilityKind::GroundSlam] },
+        MobKind::CrystalGolem     => MobStats { name: "Crystal Golem",      max_health:   300.0, floor_offset: PLAYER_FLOAT_HEIGHT, aggro_range: 12.0, melee_range: 2.0, patrol: false, resist_physical: 0.5, resist_arcane: 0.0, resist_nature: 0.3, auto_attack: AbilityKind::MeleeAuto, specials: &[] },
+        MobKind::CrystalGolemLord => MobStats { name: "Crystal Golem Lord", max_health:  1000.0, floor_offset: BOSS_FLOAT_HEIGHT,   aggro_range: 16.0, melee_range: 3.0, patrol: false, resist_physical: 0.6, resist_arcane: 0.2, resist_nature: 0.4, auto_attack: AbilityKind::MeleeAuto, specials: &[AbilityKind::GroundSlam] },
+    }
+}
+
+/// Static parameter table for every enemy ability. Kept here (server-side)
+/// because clients only need the ability's identity to pick the right
+/// telegraph geometry — damage/disruption tuning is server authority.
+pub fn stats_for_ability(kind: AbilityKind) -> AbilityStats {
+    match kind {
+        AbilityKind::MeleeAuto => AbilityStats {
+            telegraph:      0.0,
+            cooldown:       1.2,
+            foiled_cd:      0.4,
+            interrupted_cd: 0.4,
+            range:          2.0,
+            shape:          AttackShape::Single,
+            selector:       TargetSelector::TopThreat,
+            damage:         8.0,
+            ty:             DamageType::Physical,
+            disruption:     DisruptionProfile { kind: DisruptionKind::Spike, magnitude: 0.15 },
+        },
+        AbilityKind::GroundSlam => AbilityStats {
+            telegraph:      1.5,
+            cooldown:       8.0,
+            foiled_cd:      3.0,
+            interrupted_cd: 12.0,
+            range:          8.0,
+            shape:          AttackShape::Radius { radius: 2.5 },
+            selector:       TargetSelector::TopThreat,
+            damage:         25.0,
+            ty:             DamageType::Physical,
+            disruption:     DisruptionProfile { kind: DisruptionKind::Spike, magnitude: 0.9 },
+        },
     }
 }
 
@@ -75,6 +123,10 @@ pub fn spawn_mob(
     } else {
         MobBehavior::Aggro { aggro_range: stats.aggro_range, melee_range: stats.melee_range }
     };
+    let cooldowns = EnemyAbilityCooldowns {
+        auto_cd:     0.0,
+        specials_cd: vec![0.0; stats.specials.len()],
+    };
     let mut entity = commands.spawn((
         Name::new(name),
         EnemyMarker,
@@ -87,6 +139,8 @@ pub fn spawn_mob(
         ThreatList::default(),
         ReplicatedThreatList::default(),
         MobTarget::default(),
+        cooldowns,
+        MobKindComp(kind),
         InstanceId(instance_id),
         Replicate::to_clients(NetworkTarget::All),
     ));

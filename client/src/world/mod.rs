@@ -12,6 +12,7 @@ pub mod enemies;
 pub mod instance;
 pub mod players;
 pub mod selection;
+pub mod telegraph;
 pub mod terrain;
 
 pub use selection::SelectedTarget;
@@ -103,6 +104,9 @@ impl Plugin for WorldPlugin {
         app.add_observer(enemies::on_enemy_position_replicated);
         // Observer: render remote player entities when PlayerId replicates.
         app.add_observer(players::on_remote_player_replicated);
+        // Observers: spawn/despawn telegraph disc when EnemyCast arrives / is removed.
+        app.add_observer(telegraph::on_enemy_cast_added);
+        app.add_observer(telegraph::on_enemy_cast_removed);
 
         app.add_systems(
             Update,
@@ -119,6 +123,7 @@ impl Plugin for WorldPlugin {
                 players::apply_player_corrections,
                 players::sync_player_positions,
                 players::correct_local_player_position,
+                telegraph::update_telegraph_visuals,
             ).chain(),
         );
 

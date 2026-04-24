@@ -32,6 +32,11 @@ pub struct BarFillState {
     /// Bonus markers placed at random fill positions at the start of each fill cycle.
     /// Committing within `delta` of a marker's position adds its bonus to the pool.
     pub bonus_markers: Vec<BonusMarker>,
+
+    // ── Disruption ───────────────────────────────────────────────────────────
+    /// Pending bar drain from incoming hits. Consumed by `tick_bar_fill_states`
+    /// (subtracted from `fill` and spilled into `arcane_pool` on overflow).
+    pub drain_pending: f32,
 }
 
 impl Default for BarFillState {
@@ -43,6 +48,7 @@ impl Default for BarFillState {
             arcane_pool: 0.0,
             pool_decay_rate: 0.05,
             bonus_markers: Vec::new(),
+            drain_pending: 0.0,
         }
     }
 }

@@ -36,6 +36,22 @@ pub struct DamageNumberMsg {
     pub is_crit: bool,
 }
 
+/// One entry in the combat log. Sent to every player in the attacker's or
+/// target's party when a `DamageEvent` resolves. Names are serialized as
+/// strings so receivers don't need the attacker or target entity replicated.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CombatLogMsg {
+    pub attacker_name: String,
+    pub target_name:   String,
+    /// Post-resist, post-modifier damage landed on `target`.
+    pub amount:        f32,
+    pub ty:            DamageType,
+    pub is_crit:       bool,
+    /// True if the hit was dealt by a player (either the receiver or a party
+    /// member). Used to pick log-line color — outgoing vs. incoming read.
+    pub attacker_is_player: bool,
+}
+
 /// Sent to a client when the server assigns them to an instance.
 /// The client uses `terrain` to rebuild its terrain mesh and `spawn_{x,z}` to
 /// teleport the local physics body.

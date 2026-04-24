@@ -20,7 +20,7 @@ impl Plugin for SharedPlugin {
         use channels::{GameChannel, PositionChannel};
         use components::{
             combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList, Resistances},
-            enemy::{BossMarker, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
+            enemy::{BossMarker, EnemyCast, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
                 arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
@@ -29,7 +29,7 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        use messages::{CombatLogMsg, DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
         #[cfg(debug_assertions)]
         use messages::DevApplyDotMsg;
 
@@ -81,6 +81,9 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ServerToClient)
             .add_map_entities();
 
+        app.register_message::<CombatLogMsg>()
+            .add_direction(NetworkDirection::ServerToClient);
+
         // ── Components: player identity (replicated once at spawn) ─────────────
         app.register_component::<GroupId>()
             .with_replication_config(ComponentReplicationConfig {
@@ -127,6 +130,7 @@ impl Plugin for SharedPlugin {
         app.register_component::<EnemyPosition>();
         app.register_component::<EnemyVelocity>();
         app.register_component::<MobTarget>();
+        app.register_component::<EnemyCast>();
 
         // ── Components: player position/velocity (replicated every tick) ────────
         app.register_component::<PlayerPosition>();
@@ -141,6 +145,7 @@ impl Plugin for SharedPlugin {
 
         // ── Messages (local, non-networked) ──────────────────────────────────
         app.add_message::<events::combat::DamageEvent>();
+        app.add_message::<events::combat::DisruptionEvent>();
 
         app.register_component::<PlayerSelectedTarget>()
             .add_map_entities();
