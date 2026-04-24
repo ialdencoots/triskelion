@@ -52,6 +52,15 @@ pub struct CombatLogMsg {
     pub attacker_is_player: bool,
 }
 
+/// A party-chat line echoed to every player in the sender's group. The server
+/// stamps `sender_name` from the sender's replicated `PlayerName` so clients
+/// don't have to trust or look up the sender entity.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChatMsg {
+    pub sender_name: String,
+    pub text: String,
+}
+
 /// Sent to a client when the server assigns them to an instance.
 /// The client uses `terrain` to rebuild its terrain mesh and `spawn_{x,z}` to
 /// teleport the local physics body.
@@ -86,6 +95,13 @@ pub struct RequestSpawnMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RequestInstanceMsg {
     pub kind: InstanceKind,
+}
+
+/// Sent by a client to post a chat line to their party. The server fills in
+/// the sender's name before echoing a `ChatMsg` back to each party member.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChatSendMsg {
+    pub text: String,
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

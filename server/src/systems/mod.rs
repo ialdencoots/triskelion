@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod combat;
 pub mod connection;
 #[cfg(debug_assertions)]

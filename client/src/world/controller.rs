@@ -40,6 +40,7 @@ pub fn handle_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     orbit: Res<OrbitState>,
+    chat_state: Res<crate::ui::hud::chat::ChatInputState>,
     mut player_query: Query<(&mut TnuaController<ControlScheme>, &mut Transform), With<PlayerMarker>>,
 ) {
     let Ok((mut controller, mut transform)) = player_query.single_mut() else { return };
@@ -61,7 +62,13 @@ pub fn handle_input(
         (player_forward, player_right, player_forward)
     };
 
-    let move_dir = world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis);
+    // Zero movement and suppress jump while chat is focused — WASD-equiv
+    // keys become text input.
+    let move_dir = if chat_state.focused {
+        Vec3::ZERO
+    } else {
+        world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis)
+    };
 
     if face_dir.length_squared() > 0.01 {
         let target_yaw = (-face_dir.x).atan2(-face_dir.z);
@@ -76,7 +83,7 @@ pub fn handle_input(
     // initiate_action_feeding must be called every frame before any action() calls
     controller.initiate_action_feeding();
 
-    if keyboard.pressed(KeyCode::Space) {
+    if !chat_state.focused && keyboard.pressed(KeyCode::Space) {
         controller.action(ControlScheme::Jump(Default::default()));
     }
 }

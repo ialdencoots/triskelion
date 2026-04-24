@@ -5,6 +5,7 @@ use crate::plugin::AppState;
 use crate::ui::arc::ArcMaterial;
 
 pub mod action_bar;
+pub mod chat;
 pub mod combat_log;
 pub mod damage_numbers;
 pub mod enemy_bars;
@@ -24,7 +25,9 @@ impl Plugin for HudPlugin {
         app.init_resource::<target_panel::ThreatDisplayData>();
         app.init_resource::<action_bar::SlotClickPulse>();
         app.init_resource::<combat_log::UiPointerGuard>();
-        app.init_resource::<combat_log::CombatLogScrollState>();
+        app.init_resource::<combat_log::ActiveLogTab>();
+        app.init_resource::<combat_log::CombatLogResizeDrag>();
+        app.init_resource::<chat::ChatInputState>();
         app.add_systems(
             OnEnter(AppState::InGame),
             (
@@ -77,15 +80,33 @@ impl Plugin for HudPlugin {
             ),
         );
 
-        // Combat log lives in its own add_systems call because the main HUD
-        // tuple is already at Bevy's tuple-arity limit.
+        // Log pane (Chat + Combat tabs) lives in its own add_systems call
+        // because the main HUD tuple is already at Bevy's tuple-arity limit.
         app.add_systems(
             Update,
             (
-                combat_log::update_combat_log_scroll,
+                combat_log::update_log_scroll,
                 combat_log::receive_combat_log_msgs,
                 combat_log::prune_combat_log_entries,
-            ).chain(),
+                chat::receive_chat_msgs,
+                chat::prune_chat_entries,
+                combat_log::handle_log_tab_click,
+                // Chat input runs before tab visibility so pressing `/`
+                // selects the Chat tab on the same frame it focuses.
+                chat::handle_chat_input,
+                combat_log::update_log_tab_visibility
+                    .after(chat::handle_chat_input)
+                    .after(combat_log::handle_log_tab_click),
+                chat::update_chat_input_display.after(chat::handle_chat_input),
+            ),
+        );
+        // Runs before the orbit camera so the drag-active guard flag it sets
+        // is visible on the same frame — otherwise the mouse-down frame would
+        // leak motion into camera rotation.
+        app.add_systems(
+            Update,
+            combat_log::handle_combat_log_resize
+                .before(crate::world::camera::update_orbit_camera),
         );
         // Pin-to-bottom sync runs after Bevy's UI layout so ComputedNode
         // reflects the current frame's appended rows. Using PostUpdate means
@@ -93,7 +114,7 @@ impl Plugin for HudPlugin {
         // keeps subsequent wheel deltas effective.
         app.add_systems(
             PostUpdate,
-            combat_log::pin_combat_log_to_bottom
+            combat_log::pin_log_entries_to_bottom
                 .after(bevy::ui::UiSystems::Layout),
         );
     }

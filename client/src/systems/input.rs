@@ -13,6 +13,7 @@ use shared::messages::SelectTargetMsg;
 use shared::settings::{AIRBORNE_HEIGHT_THRESHOLD, AIRBORNE_VY_THRESHOLD, PLAYER_FLOAT_HEIGHT};
 
 use crate::ui::hud::action_bar::SlotClickPulse;
+use crate::ui::hud::chat::ChatInputState;
 use crate::world::camera::OrbitState;
 use crate::world::controller::world_move_dir;
 use crate::world::instance::CurrentInstanceTerrain;
@@ -51,12 +52,19 @@ pub fn gather_and_send_input(
     orbit: Res<OrbitState>,
     terrain: Res<CurrentInstanceTerrain>,
     bindings: Res<ActionBarBindings>,
+    chat_state: Res<ChatInputState>,
     mut pulse: ResMut<SlotClickPulse>,
     player_query: Query<(&Transform, &LinearVelocity), With<PlayerMarker>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
     mut char_facing: Local<f32>,
 ) {
     let Ok(mut sender) = sender_query.single_mut() else { return };
+
+    // While the chat input is focused, suppress keyboard-driven actions:
+    // typed characters would otherwise also fire abilities / toggle stances.
+    // Click-pulses from the action bar still flow through so mouse-driven
+    // combat stays responsive.
+    let keyboard_suppressed = chat_state.focused;
 
     let yaw_rot = Quat::from_rotation_y(orbit.yaw);
     let cam_forward = yaw_rot * Vec3::NEG_Z;
@@ -74,7 +82,11 @@ pub fn gather_and_send_input(
         (player_forward, player_right)
     };
 
-    let move_3d = world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis);
+    let move_3d = if keyboard_suppressed {
+        Vec3::ZERO
+    } else {
+        world_move_dir(&keyboard, both_mouse, fwd_axis, right_axis)
+    };
 
     // TnuaController floats the physics capsule at ~1.95 m above the terrain using
     // a spring-damper, which produces small Y oscillations even at rest.  Relaying
@@ -105,10 +117,12 @@ pub fn gather_and_send_input(
         .unwrap_or((0.0, 0.0, *char_facing));
 
     // A slot fires this frame if either its bound key was just pressed OR its
-    // on-screen button was just clicked (SlotClickPulse).
+    // on-screen button was just clicked (SlotClickPulse). Keyboard is
+    // ignored while the chat input is focused so typing doesn't cast.
     let slot_fired = |slot: ActionSlot| -> bool {
         let i = slot.index();
-        let key_hit = bindings.0.get(i).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
+        let key_hit = !keyboard_suppressed
+            && bindings.0.get(i).map(|&k| keyboard.just_pressed(k)).unwrap_or(false);
         let click_hit = pulse.0.get(i).copied().unwrap_or(false);
         key_hit || click_hit
     };
@@ -123,7 +137,9 @@ pub fn gather_and_send_input(
     } else {
         None
     };
-    let exit_stance = keyboard.just_pressed(KeyCode::Escape);
+    // Escape while focused cancels chat input (handled in chat.rs); don't
+    // also use it to exit stance on the same frame.
+    let exit_stance = !keyboard_suppressed && keyboard.just_pressed(KeyCode::Escape);
 
     let (x, z) = player_query
         .single()

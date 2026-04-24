@@ -29,7 +29,7 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{CombatLogMsg, DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        use messages::{ChatMsg, ChatSendMsg, CombatLogMsg, DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
         #[cfg(debug_assertions)]
         use messages::DevApplyDotMsg;
 
@@ -82,6 +82,12 @@ impl Plugin for SharedPlugin {
             .add_map_entities();
 
         app.register_message::<CombatLogMsg>()
+            .add_direction(NetworkDirection::ServerToClient);
+
+        app.register_message::<ChatSendMsg>()
+            .add_direction(NetworkDirection::ClientToServer);
+
+        app.register_message::<ChatMsg>()
             .add_direction(NetworkDirection::ServerToClient);
 
         // ── Components: player identity (replicated once at spawn) ─────────────

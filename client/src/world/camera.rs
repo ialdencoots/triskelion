@@ -43,7 +43,12 @@ pub fn update_orbit_camera(
         return;
     }
 
-    if mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Left) {
+    // Skip orbit rotation while a UI element is consuming drag (combat-log
+    // resize handle). Without this, click-drag on the handle would also spin
+    // the camera.
+    if !pointer_guard.blocks_camera_orbit
+        && (mouse_buttons.pressed(MouseButton::Right) || mouse_buttons.pressed(MouseButton::Left))
+    {
         orbit.yaw -= mouse_motion.delta.x * 0.005;
         orbit.pitch = (orbit.pitch - mouse_motion.delta.y * 0.005).clamp(-1.5, 1.5);
     }

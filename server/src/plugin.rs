@@ -4,7 +4,7 @@ use lightyear::prelude::server::*;
 
 use shared::settings;
 
-use crate::systems::{combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
+use crate::systems::{chat, combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
 #[cfg(debug_assertions)]
 use crate::systems::dev_dots;
 
@@ -69,6 +69,7 @@ impl Plugin for ServerGamePlugin {
                 minigame::tick_wave_interference_states,
                 minigame::tick_value_lock_states,
                 minigame::tick_heartbeat_states,
+                chat::process_chat_messages,
             ),
         );
 
