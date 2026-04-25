@@ -29,9 +29,13 @@ use shared::components::player::RoleStance;
 use super::combat::next_unit;
 
 fn tick_arc(arc: &mut ArcState, dt: f32) {
-    arc.disruption_velocity *= (-dt * 0.5_f32).exp();
-    arc.phase += arc.disruption_velocity * dt;
-    arc.time += dt;
+    let effective_dt = if arc.disruption_remaining > 0.0 {
+        arc.disruption_remaining = (arc.disruption_remaining - dt).max(0.0);
+        -dt
+    } else {
+        dt
+    };
+    arc.time += effective_dt;
     arc.theta = FRAC_PI_2 + arc.amplitude * (arc.omega * arc.time + arc.phase).sin();
 
     // Apex-zone rising-edge detection drives two behaviors:
@@ -56,8 +60,7 @@ pub fn process_arc_commit(arc: &mut ArcState) {
     if arc.commit.in_lockout {
         return;
     }
-    let dot_vel = arc.amplitude * arc.omega * (arc.omega * arc.time + arc.phase).cos()
-        + arc.disruption_velocity;
+    let dot_vel = arc.amplitude * arc.omega * (arc.omega * arc.time + arc.phase).cos();
     let peak_vel = arc.amplitude * arc.omega;
     let quality = (dot_vel.abs() / peak_vel).min(1.0);
     arc.commit.push(quality, QUALITY_HISTORY_CAPACITY as usize);

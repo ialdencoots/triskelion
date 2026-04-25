@@ -10,7 +10,7 @@ mod common;
 
 use bevy::prelude::*;
 
-use shared::components::minigame::arc::ArcState;
+use shared::components::minigame::arc::{ArcState, SecondaryArcState};
 use shared::components::minigame::bar_fill::BarFillState;
 use shared::components::minigame::heartbeat::HeartbeatState;
 use shared::components::combat::{DisruptionKind, DisruptionProfile};
@@ -62,11 +62,12 @@ fn spike_to_arc_adds_spike_arc_coefficient_times_magnitude() {
     send(&mut app, target, DisruptionKind::Spike, 0.5);
 
     let arc = app.world().entity(target).get::<ArcState>().unwrap();
-    // SPIKE_ARC = 3.0 → 3.0 × 0.5 = 1.5
+    // SPIKE_ARC = 1.0 sec/mag → 1.0 × 0.5 = 0.5 s of reversal (under the
+    // 0.6 s cap).
     assert!(
-        (arc.disruption_velocity - 1.5).abs() < 1e-5,
-        "expected disruption_velocity ≈ 1.5, got {}",
-        arc.disruption_velocity,
+        (arc.disruption_remaining - 0.5).abs() < 1e-5,
+        "expected disruption_remaining ≈ 0.5, got {}",
+        arc.disruption_remaining,
     );
 }
 
@@ -78,18 +79,19 @@ fn sustained_to_arc_uses_drift_coefficient() {
     send(&mut app, target, DisruptionKind::Sustained, 0.5);
 
     let arc = app.world().entity(target).get::<ArcState>().unwrap();
-    // DRIFT_ARC = 0.8 → 0.8 × 0.5 = 0.4
+    // DRIFT_ARC = 0.4 → 0.4 × 0.5 = 0.20 s of reversal.
     assert!(
-        (arc.disruption_velocity - 0.4).abs() < 1e-5,
-        "expected disruption_velocity ≈ 0.4, got {}",
-        arc.disruption_velocity,
+        (arc.disruption_remaining - 0.20).abs() < 1e-5,
+        "expected disruption_remaining ≈ 0.20, got {}",
+        arc.disruption_remaining,
     );
 }
 
 #[test]
-fn arc_disruption_accumulates_additively() {
-    // Counter-directional impulses are additive — a second spike on top of
-    // the first stacks rather than replacing.
+fn arc_disruption_accumulates_up_to_cap() {
+    // Hits stack the time-reversal window additively, but a hard cap
+    // (`MAX_ARC_DISRUPTION_SECS = 0.6`) prevents a burst from pinning the
+    // dot for half a cycle.
     let mut app = disruption_app();
     let target = app.world_mut().spawn(ArcState::default()).id();
 
@@ -97,13 +99,31 @@ fn arc_disruption_accumulates_additively() {
     send(&mut app, target, DisruptionKind::Spike, 0.3);
 
     let arc = app.world().entity(target).get::<ArcState>().unwrap();
-    // Note: `tick_arc` would decay the first impulse during the second
-    // app.update — but it's not registered in this app, so we observe pure
-    // additive accumulation. Expected: 3.0 × 0.4 + 3.0 × 0.3 = 2.1
+    // 1.0 × 0.4 + 1.0 × 0.3 = 0.7, clamped to 0.6.
     assert!(
-        (arc.disruption_velocity - 2.1).abs() < 1e-5,
-        "expected disruption_velocity ≈ 2.1, got {}",
-        arc.disruption_velocity,
+        (arc.disruption_remaining - 0.6).abs() < 1e-5,
+        "expected disruption_remaining ≈ 0.6 (capped), got {}",
+        arc.disruption_remaining,
+    );
+}
+
+#[test]
+fn spike_to_secondary_arc_routes_through_inner_state() {
+    // SecondaryArcState wraps ArcState; disruption must reach the inner
+    // state with the same magnitude as a primary jolt.
+    let mut app = disruption_app();
+    let target = app
+        .world_mut()
+        .spawn(SecondaryArcState(ArcState::default()))
+        .id();
+
+    send(&mut app, target, DisruptionKind::Spike, 0.5);
+
+    let sec = app.world().entity(target).get::<SecondaryArcState>().unwrap();
+    assert!(
+        (sec.0.disruption_remaining - 0.5).abs() < 1e-5,
+        "expected secondary disruption_remaining ≈ 0.5, got {}",
+        sec.0.disruption_remaining,
     );
 }
 
@@ -168,8 +188,8 @@ fn disruption_only_affects_named_target() {
 
     let alice_arc = app.world().entity(alice).get::<ArcState>().unwrap();
     let bob_arc = app.world().entity(bob).get::<ArcState>().unwrap();
-    assert!(alice_arc.disruption_velocity > 0.0);
-    assert_eq!(bob_arc.disruption_velocity, 0.0, "Bob must be untouched");
+    assert!(alice_arc.disruption_remaining > 0.0);
+    assert_eq!(bob_arc.disruption_remaining, 0.0, "Bob must be untouched");
 }
 
 #[test]
@@ -191,7 +211,7 @@ fn disruption_to_entity_with_multiple_minigames_routes_to_each() {
     send(&mut app, target, DisruptionKind::Spike, 1.0);
 
     let entity_ref = app.world().entity(target);
-    assert!(entity_ref.get::<ArcState>().unwrap().disruption_velocity > 0.0);
+    assert!(entity_ref.get::<ArcState>().unwrap().disruption_remaining > 0.0);
     assert!(entity_ref.get::<HeartbeatState>().unwrap().frequency_spike > 0.0);
     assert!(entity_ref.get::<BarFillState>().unwrap().drain_pending > 0.0);
 }

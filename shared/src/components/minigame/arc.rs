@@ -23,7 +23,11 @@ pub const QUALITY_HISTORY_CAPACITY: u32 = GRID_CRITICAL_MASS_CAP;
 /// Commit quality = dot_velocity / peak_velocity  [0, 1].
 /// Streak = consecutive commits landing in the nadir zone (~innermost 20%).
 ///
-/// Disruption applies a counter-directional velocity impulse that decays ~2 s.
+/// Disruption opens a time-reversal window: while `disruption_remaining > 0`,
+/// the simulation clock runs backward, so the dot literally retraces its sine
+/// path until the window closes. This produces an unambiguous momentum
+/// disruption — the dot's direction flips on the frame the hit lands and
+/// snaps back to natural travel when the window expires.
 /// Ghost arc history (visual record of commit angles) is client-side only.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ArcState {
@@ -42,9 +46,11 @@ pub struct ArcState {
     pub theta: f32,
 
     // ── Disruption ───────────────────────────────────────────────────────────
-    /// Additional signed velocity added by incoming hits (counter-directional impulse).
-    /// Decays back to 0 over ~2 s. Multiple hits accumulate additively.
-    pub disruption_velocity: f32,
+    /// Seconds of remaining time-reversal. While positive, `tick_arc` runs
+    /// the sine clock backwards, so the dot retraces its prior path. Hits
+    /// add to this; clamped to a small upper bound so a single big hit can't
+    /// pin the dot for half a cycle.
+    pub disruption_remaining: f32,
 
     // ── Commit state ─────────────────────────────────────────────────────────
     /// Lockout flag, last commit quality, and recent-quality ring buffer.
@@ -90,7 +96,7 @@ impl Default for ArcState {
             phase: 0.0,
             time: 0.0,
             theta: std::f32::consts::FRAC_PI_2,
-            disruption_velocity: 0.0,
+            disruption_remaining: 0.0,
             commit: CommitTracker::with_capacity(QUALITY_HISTORY_CAPACITY as usize),
             last_commit_theta: std::f32::consts::FRAC_PI_2,
             streak: 0,

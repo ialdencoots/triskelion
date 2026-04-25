@@ -825,13 +825,18 @@ pub fn tick_dots(
 
 // ── Disruption resolution ────────────────────────────────────────────────────
 
-/// Arc `disruption_velocity` per unit of Spike magnitude — tuned so a small
-/// auto-attack (magnitude 0.15) produces a perceptible wobble on the dot and
-/// a full GroundSlam (magnitude 0.9) briefly throws it off rhythm.
-const SPIKE_ARC: f32 = 3.0;
-/// Arc drift per unit of Sustained magnitude. Smaller than Spike — sustained
-/// disruption is meant to be an ambient noise floor, not a punch.
-const DRIFT_ARC: f32 = 0.8;
+/// Seconds of arc time-reversal per unit of Spike magnitude. At 1.0, a small
+/// auto-attack (magnitude 0.15) reverses the dot for 0.15 s (~9 frames at 60
+/// fps) and a full GroundSlam (magnitude 0.9) reverses for 0.9 s — half a
+/// natural oscillation. Capped at `MAX_ARC_DISRUPTION_SECS`.
+const SPIKE_ARC: f32 = 1.0;
+/// Seconds of arc time-reversal per unit of Sustained magnitude. Smaller
+/// than Spike — sustained disruption is an ambient noise floor.
+const DRIFT_ARC: f32 = 0.4;
+/// Hard cap on `disruption_remaining`. Without this, a stacked burst of
+/// hits could pin the dot in reverse for an entire cycle, removing player
+/// agency. 0.6 s ≈ a quarter cycle at the default omega.
+const MAX_ARC_DISRUPTION_SECS: f32 = 0.6;
 /// Heartbeat frequency spike (Hz) per unit of Spike magnitude.
 const SPIKE_HB: f32 = 0.6;
 /// Heartbeat envelope noise amplitude per unit of Sustained magnitude.
@@ -843,21 +848,28 @@ const DRAIN_BF: f32 = 0.35;
 /// Consume every queued `DisruptionEvent` and apply it to whichever minigame
 /// component the target currently has. Each player's active stance only has
 /// one primary minigame component, so at most one branch fires per event.
-/// Arc's `disruption_velocity` sign is intentionally unchanged (additive) —
-/// accumulates counter-directional impulses.
+/// Arc disruption opens a time-reversal window so the dot retraces its
+/// path; multiple hits extend the window up to `MAX_ARC_DISRUPTION_SECS`.
 pub fn apply_disruption_events(
     mut messages: MessageReader<DisruptionEvent>,
-    mut arcs:       Query<&mut ArcState>,
-    mut heartbeats: Query<&mut HeartbeatState>,
-    mut bars:       Query<&mut BarFillState>,
+    mut arcs:           Query<&mut ArcState>,
+    mut secondary_arcs: Query<&mut SecondaryArcState>,
+    mut heartbeats:     Query<&mut HeartbeatState>,
+    mut bars:           Query<&mut BarFillState>,
 ) {
     for ev in messages.read() {
         let mag = ev.profile.magnitude;
+        let secs = match ev.profile.kind {
+            DisruptionKind::Spike     => SPIKE_ARC * mag,
+            DisruptionKind::Sustained => DRIFT_ARC * mag,
+        };
         if let Ok(mut arc) = arcs.get_mut(ev.target) {
-            match ev.profile.kind {
-                DisruptionKind::Spike     => arc.disruption_velocity += SPIKE_ARC * mag,
-                DisruptionKind::Sustained => arc.disruption_velocity += DRIFT_ARC * mag,
-            }
+            arc.disruption_remaining =
+                (arc.disruption_remaining + secs).min(MAX_ARC_DISRUPTION_SECS);
+        }
+        if let Ok(mut sec) = secondary_arcs.get_mut(ev.target) {
+            sec.0.disruption_remaining =
+                (sec.0.disruption_remaining + secs).min(MAX_ARC_DISRUPTION_SECS);
         }
         if let Ok(mut hb) = heartbeats.get_mut(ev.target) {
             match ev.profile.kind {
