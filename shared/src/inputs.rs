@@ -59,4 +59,7 @@ pub struct MinigameInput {
     pub action_3: bool,
     pub action_4: bool,
     pub action_5: bool,
+    /// Sixth slot (`SecondaryUp`, default Q). Used as the grid's Up direction
+    /// for the Duelist; no-op for Tank/Heal stances.
+    pub action_6: bool,
 }

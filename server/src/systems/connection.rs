@@ -8,7 +8,8 @@ use shared::channels::GameChannel;
 use shared::components::combat::{AbilityCooldowns, CombatState, Health};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::{
-    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState, heartbeat::HeartbeatState,
+    arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
+    grid::{DpsGridTrigger, GridState}, heartbeat::HeartbeatState,
     value_lock::ValueLockState, wave_interference::WaveInterferenceState,
 };
 use shared::components::player::{
@@ -161,7 +162,13 @@ pub fn process_spawn_requests(
 
             match &req.class {
                 Class::Physical => {
-                    commands.entity(player_entity).insert((ArcState::default(), SecondaryArcState::default(), CubeState::default()));
+                    commands.entity(player_entity).insert((
+                        ArcState::default(),
+                        SecondaryArcState::default(),
+                        CubeState::default(),
+                        GridState::default(),
+                        DpsGridTrigger::default(),
+                    ));
                 }
                 Class::Arcane => {
                     commands.entity(player_entity).insert((BarFillState::default(), WaveInterferenceState::default()));
@@ -225,6 +232,8 @@ pub fn process_instance_requests(
         Option<&mut ArcState>,
         Option<&mut SecondaryArcState>,
         Option<&mut CubeState>,
+        Option<&mut GridState>,
+        Option<&mut DpsGridTrigger>,
     )>,
     mut reg: ResMut<InstanceRegistry>,
 ) {
@@ -279,7 +288,7 @@ pub fn process_instance_requests(
             // cancels an active cube and clears arc streak/history. Without
             // this, switching instances would leave the cube rendered but
             // unreachable (the input handler gates on stance).
-            if let Ok((mut combat, mut arc_opt, mut sec_opt, mut cube_opt)) =
+            if let Ok((mut combat, mut arc_opt, mut sec_opt, mut cube_opt, mut grid_opt, mut grid_trig_opt)) =
                 player_state_q.get_mut(player_entity)
             {
                 if combat.active_stance.is_some() {
@@ -288,6 +297,8 @@ pub fn process_instance_requests(
                         arc_opt.as_deref_mut(),
                         sec_opt.as_deref_mut(),
                         cube_opt.as_deref_mut(),
+                        grid_opt.as_deref_mut(),
+                        grid_trig_opt.as_deref_mut(),
                     );
                 }
             }

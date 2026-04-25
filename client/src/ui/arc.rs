@@ -7,6 +7,7 @@ use bevy::{
 
 use shared::components::combat::CombatState;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
+use shared::components::minigame::grid::GridState;
 use shared::components::player::{PlayerId, RoleStance};
 
 use crate::plugin::LocalClientId;
@@ -322,6 +323,7 @@ pub fn render_arc(
         &CombatState,
         Option<&ArcState>,
         Option<&SecondaryArcState>,
+        Option<&GridState>,
         Option<&mut GhostArcHistory>,
         Option<&mut SecondaryGhostArcHistory>,
         Option<&mut CentralGhostHistory>,
@@ -341,11 +343,27 @@ pub fn render_arc(
     mut arc_materials: ResMut<Assets<ArcMaterial>>,
 ) {
     let Some(own) = own_entity else { return };
-    let Ok((_pid, combat, arc_opt, secondary_opt, ghost_opt, mut sec_ghost_opt, mut central_opt)) =
+    let Ok((_pid, combat, arc_opt, secondary_opt, grid_opt, ghost_opt, mut sec_ghost_opt, mut central_opt)) =
         server_q.get_mut(own.0)
     else {
         return;
     };
+
+    // While the DPS grid overlay is active, the arc display is replaced. Hide
+    // all arc nodes and short-circuit; ghost histories are preserved so they
+    // re-appear when the grid resolves.
+    if grid_opt.map(|g| g.active).unwrap_or(false) {
+        if let Ok((mut vis, _, _, _)) = primary_q.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+        if let Ok((mut vis, _, _)) = secondary_q.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+        if let Ok((mut vis, _, _)) = central_q.single_mut() {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
 
     let in_stance = combat.active_stance.is_some();
     let in_dps = combat.active_stance == Some(RoleStance::Dps);

@@ -9,6 +9,7 @@ use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
 use shared::components::minigame::bar_fill::BarFillState;
 use shared::components::minigame::cube::{CubeEdge, CubeState};
+use shared::components::minigame::grid::{DpsGridTrigger, GridDir, GridState, MIN_GRID_BUDGET};
 use shared::components::minigame::heartbeat::HeartbeatState;
 use shared::components::player::{
     GroupId, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
@@ -22,7 +23,9 @@ use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::connection::PlayerEntityLink;
 use super::instances::InstanceRegistry;
-use super::minigame::{cancel_cube, process_arc_commit, process_cube_collect};
+use super::minigame::{
+    cancel_cube, cancel_grid, process_arc_commit, process_cube_collect, process_grid_move,
+};
 use crate::util::cmp_f32;
 
 /// Wipe per-stance state that shouldn't carry across a stance transition:
@@ -37,6 +40,8 @@ pub fn reset_on_stance_change(
     arc: Option<&mut ArcState>,
     secondary: Option<&mut SecondaryArcState>,
     cube: Option<&mut CubeState>,
+    grid: Option<&mut GridState>,
+    grid_trigger: Option<&mut DpsGridTrigger>,
 ) {
     if let Some(arc) = arc {
         arc.streak = 0;
@@ -54,6 +59,14 @@ pub fn reset_on_stance_change(
         if cube.active {
             cancel_cube(cube);
         }
+    }
+    if let Some(grid) = grid {
+        if grid.active {
+            cancel_grid(grid);
+        }
+    }
+    if let Some(trigger) = grid_trigger {
+        trigger.clear();
     }
 }
 
@@ -125,6 +138,8 @@ pub fn process_player_inputs(
         Option<&mut ArcState>,
         Option<&mut SecondaryArcState>,
         Option<&mut CubeState>,
+        Option<&mut GridState>,
+        Option<&mut DpsGridTrigger>,
         Option<&PlayerSelectedTarget>,
     ), With<PlayerId>>,
     enemy_query: Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
@@ -143,6 +158,8 @@ pub fn process_player_inputs(
             mut arc_opt,
             mut secondary_arc_opt,
             mut cube_opt,
+            mut grid_opt,
+            mut grid_trigger_opt,
             target_opt,
         )) = player_query.get_mut(link.0) else { continue };
 
@@ -185,67 +202,175 @@ pub fn process_player_inputs(
                     arc_opt.as_deref_mut(),
                     secondary_arc_opt.as_deref_mut(),
                     cube_opt.as_deref_mut(),
+                    grid_opt.as_deref_mut(),
+                    grid_trigger_opt.as_deref_mut(),
                 );
             }
 
-            // ── Arc commits (Physical class) ───────────────────────────────────
-            if input.minigame.action_1 {
-                debug!("[ARC] action_1 received — stance={:?} arc_present={}",
-                    combat.active_stance, arc_opt.is_some());
-            }
-            if input.minigame.action_1 && combat.active_stance.is_some() {
-                if let Some(ref mut arc) = arc_opt {
-                    let was_unlocked = !arc.commit.in_lockout;
-                    debug!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
-                        arc.commit.last_quality, input.facing_yaw);
-                    process_arc_commit(arc);
-                    if was_unlocked {
-                        emit_arc_damage(
-                            arc.commit.last_quality,
-                            input.facing_yaw,
-                            link.0,
-                            &pos,
-                            target_opt,
-                            &enemy_query,
-                            &mut damage_writer,
-                        );
-                    }
-                }
-            }
-            if input.minigame.action_2 && combat.active_stance == Some(RoleStance::Dps) {
-                if let Some(ref mut secondary) = secondary_arc_opt {
-                    let was_unlocked = !secondary.0.commit.in_lockout;
-                    process_arc_commit(&mut secondary.0);
-                    if was_unlocked {
-                        emit_arc_damage(
-                            secondary.0.commit.last_quality,
-                            input.facing_yaw,
-                            link.0,
-                            &pos,
-                            target_opt,
-                            &enemy_query,
-                            &mut damage_writer,
-                        );
-                    }
-                }
-            }
+            // ── Grid routing or arc commits ────────────────────────────────────
+            //
+            // While the DPS grid overlay is active, both arcs' commit input is
+            // suspended (their oscillation continues to tick) and the
+            // directional secondary slots route into the grid instead.
+            //
+            // Otherwise normal arc commits flow, with DPS apex commits
+            // additionally triggering cross-arc break detection: if the apex
+            // drops `shared_delta` from ≥ MIN_GRID_BUDGET to < MIN_GRID_BUDGET,
+            // we stash the budget + winning-arc history on `DpsGridTrigger`
+            // for `tick_grid_states` to consume next tick.
+            let grid_active = grid_opt.as_deref().map(|g| g.active).unwrap_or(false);
+            let is_dps = combat.active_stance == Some(RoleStance::Dps);
 
-            // ── Cube collects (Tank/Heal only) ─────────────────────────────────
-            // Client binds A/X/G → action_3/4/5 for Left/Bottom/Right; action_2
-            // stays dedicated to the DPS secondary arc so slots never overlap.
-            let in_tank_heal = matches!(
-                combat.active_stance,
-                Some(RoleStance::Tank) | Some(RoleStance::Heal)
-            );
-            if in_tank_heal {
-                if let Some(ref mut cube) = cube_opt {
-                    for (pressed, edge) in [
-                        (input.minigame.action_3, CubeEdge::Left),
-                        (input.minigame.action_4, CubeEdge::Bottom),
-                        (input.minigame.action_5, CubeEdge::Right),
-                    ] {
-                        if pressed {
-                            process_cube_collect(cube, edge);
+            if grid_active && is_dps {
+                if let Some(ref mut grid) = grid_opt {
+                    // Priority: Right > Up > Down > Left (forward bias).
+                    let dir = if input.minigame.action_5 {
+                        Some(GridDir::Right)
+                    } else if input.minigame.action_6 {
+                        Some(GridDir::Up)
+                    } else if input.minigame.action_4 {
+                        Some(GridDir::Down)
+                    } else if input.minigame.action_3 {
+                        Some(GridDir::Left)
+                    } else {
+                        None
+                    };
+                    if let Some(d) = dir {
+                        process_grid_move(grid, d);
+                    }
+                }
+            } else {
+                if input.minigame.action_1 {
+                    debug!("[ARC] action_1 received — stance={:?} arc_present={}",
+                        combat.active_stance, arc_opt.is_some());
+                }
+                if input.minigame.action_1 && combat.active_stance.is_some() {
+                    if let Some(ref mut arc) = arc_opt {
+                        let was_unlocked = !arc.commit.in_lockout;
+                        debug!("[ARC] commit attempt — was_unlocked={was_unlocked} quality={:.2} facing_yaw={:.2}",
+                            arc.commit.last_quality, input.facing_yaw);
+
+                        // Pre-commit: capture cross-arc state for DPS break detection.
+                        let (pre_shared, apex_was_winning) = if is_dps {
+                            if let Some(sec) = secondary_arc_opt.as_deref() {
+                                let pa = arc.streak.saturating_sub(arc.streak_at_last_activation);
+                                let ps = sec.0.streak.saturating_sub(sec.0.streak_at_last_activation);
+                                // Primary wins ties (apex_arc == primary here).
+                                (pa.max(ps), pa >= ps)
+                            } else {
+                                let pa = arc.streak.saturating_sub(arc.streak_at_last_activation);
+                                (pa, true)
+                            }
+                        } else {
+                            (0u32, false)
+                        };
+
+                        process_arc_commit(arc);
+                        if was_unlocked {
+                            emit_arc_damage(
+                                arc.commit.last_quality,
+                                input.facing_yaw,
+                                link.0,
+                                &pos,
+                                target_opt,
+                                &enemy_query,
+                                &mut damage_writer,
+                            );
+                        }
+
+                        // Post-commit: detect break trigger (DPS only). The
+                        // apex push has already happened inside
+                        // `process_arc_commit`, so `arc.commit.history` is the
+                        // correct snapshot when the apex arc was the winning
+                        // arc — the breaking apex's quality feeds step 1 with
+                        // a low magnitude per the design doc.
+                        if is_dps {
+                            if let (Some(sec), Some(trig)) = (
+                                secondary_arc_opt.as_deref(),
+                                grid_trigger_opt.as_deref_mut(),
+                            ) {
+                                let pa = arc.streak.saturating_sub(arc.streak_at_last_activation);
+                                let ps = sec.0.streak.saturating_sub(sec.0.streak_at_last_activation);
+                                let post_shared = pa.max(ps);
+                                if pre_shared >= MIN_GRID_BUDGET && post_shared < MIN_GRID_BUDGET {
+                                    let history = if apex_was_winning {
+                                        arc.commit.history.clone()
+                                    } else {
+                                        sec.0.commit.history.clone()
+                                    };
+                                    trig.pending_break_budget = Some(pre_shared);
+                                    trig.pending_break_history = Some(history);
+                                }
+                            }
+                        }
+                    }
+                }
+                if input.minigame.action_2 && is_dps {
+                    if let Some(ref mut secondary) = secondary_arc_opt {
+                        let was_unlocked = !secondary.0.commit.in_lockout;
+
+                        let (pre_shared, apex_was_winning) =
+                            if let Some(arc_ref) = arc_opt.as_deref() {
+                                let pa = arc_ref.streak.saturating_sub(arc_ref.streak_at_last_activation);
+                                let ps = secondary.0.streak.saturating_sub(secondary.0.streak_at_last_activation);
+                                // Primary wins ties; apex_arc is secondary, so winning_is_apex == ps > pa.
+                                (pa.max(ps), ps > pa)
+                            } else {
+                                let ps = secondary.0.streak.saturating_sub(secondary.0.streak_at_last_activation);
+                                (ps, true)
+                            };
+
+                        process_arc_commit(&mut secondary.0);
+                        if was_unlocked {
+                            emit_arc_damage(
+                                secondary.0.commit.last_quality,
+                                input.facing_yaw,
+                                link.0,
+                                &pos,
+                                target_opt,
+                                &enemy_query,
+                                &mut damage_writer,
+                            );
+                        }
+
+                        if let (Some(arc_ref), Some(trig)) = (
+                            arc_opt.as_deref(),
+                            grid_trigger_opt.as_deref_mut(),
+                        ) {
+                            let pa = arc_ref.streak.saturating_sub(arc_ref.streak_at_last_activation);
+                            let ps = secondary.0.streak.saturating_sub(secondary.0.streak_at_last_activation);
+                            let post_shared = pa.max(ps);
+                            if pre_shared >= MIN_GRID_BUDGET && post_shared < MIN_GRID_BUDGET {
+                                let history = if apex_was_winning {
+                                    secondary.0.commit.history.clone()
+                                } else {
+                                    arc_ref.commit.history.clone()
+                                };
+                                trig.pending_break_budget = Some(pre_shared);
+                                trig.pending_break_history = Some(history);
+                            }
+                        }
+                    }
+                }
+
+                // ── Cube collects (Tank/Heal only) ─────────────────────────
+                // Client binds A/X/G → action_3/4/5 for Left/Bottom/Right;
+                // action_2 stays dedicated to the DPS secondary arc so slots
+                // never overlap.
+                let in_tank_heal = matches!(
+                    combat.active_stance,
+                    Some(RoleStance::Tank) | Some(RoleStance::Heal)
+                );
+                if in_tank_heal {
+                    if let Some(ref mut cube) = cube_opt {
+                        for (pressed, edge) in [
+                            (input.minigame.action_3, CubeEdge::Left),
+                            (input.minigame.action_4, CubeEdge::Bottom),
+                            (input.minigame.action_5, CubeEdge::Right),
+                        ] {
+                            if pressed {
+                                process_cube_collect(cube, edge);
+                            }
                         }
                     }
                 }

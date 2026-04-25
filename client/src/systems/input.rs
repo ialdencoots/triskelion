@@ -154,6 +154,7 @@ pub fn gather_and_send_input(
     let cube_left   = slot_fired(ActionSlot::SecondaryLeft);
     let cube_bottom = slot_fired(ActionSlot::SecondaryDown);
     let cube_right  = slot_fired(ActionSlot::SecondaryRight);
+    let secondary_up = slot_fired(ActionSlot::SecondaryUp);
 
     // Clear the click pulse now that this frame's input has been read — next
     // frame a click must press again to fire.
@@ -172,6 +173,7 @@ pub fn gather_and_send_input(
             action_3: cube_left,
             action_4: cube_bottom,
             action_5: cube_right,
+            action_6: secondary_up,
         },
         facing_yaw: *char_facing,
     });

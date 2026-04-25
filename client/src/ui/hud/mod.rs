@@ -39,6 +39,8 @@ impl Plugin for HudPlugin {
                     .after(minigame_anchor::spawn_minigame_root),
                 crate::ui::cube::spawn_cube_overlay
                     .after(minigame_anchor::spawn_minigame_root),
+                crate::ui::grid::spawn_grid_overlay
+                    .after(minigame_anchor::spawn_minigame_root),
                 crate::ui::streak::spawn_streak_counters
                     .after(minigame_anchor::spawn_minigame_root),
                 group_frame::spawn_group_frame,

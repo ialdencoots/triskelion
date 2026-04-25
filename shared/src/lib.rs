@@ -24,6 +24,7 @@ impl Plugin for SharedPlugin {
             instance::InstanceId,
             minigame::{
                 arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
+                grid::{DpsGridTrigger, GridState},
                 heartbeat::HeartbeatState, value_lock::ValueLockState,
                 wave_interference::WaveInterferenceState,
             },
@@ -168,6 +169,8 @@ impl Plugin for SharedPlugin {
         app.register_component::<ArcState>();
         app.register_component::<SecondaryArcState>();
         app.register_component::<CubeState>();
+        app.register_component::<GridState>();
+        app.register_component::<DpsGridTrigger>();
         app.register_component::<BarFillState>();
         app.register_component::<WaveInterferenceState>();
         app.register_component::<ValueLockState>();

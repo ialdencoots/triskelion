@@ -3,6 +3,7 @@ pub mod theme;
 pub mod character_select;
 pub mod bar_fill;
 pub mod cube;
+pub mod grid;
 pub mod heartbeat;
 pub mod hud;
 pub mod streak;
