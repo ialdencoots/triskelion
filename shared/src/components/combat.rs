@@ -34,6 +34,12 @@ impl Default for Health {
     }
 }
 
+/// Marker inserted by the server when an entity's HP first reaches 0. Replicated
+/// to clients so they can react with the death visual. Once present, an entity
+/// cannot attack, be attacked, healed, or take damage.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct Dead;
+
 /// Kind of damage produced by an action. Mirrors the three playable classes so
 /// damage carries class identity through the formula.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]

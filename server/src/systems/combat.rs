@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, DisruptionKind, Health, ReplicatedThreatList, Resistances};
-use shared::components::enemy::{EnemyMarker, EnemyName, EnemyPosition};
+use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Dead, DisruptionKind, Health, ReplicatedThreatList, Resistances};
+use shared::components::enemy::{EnemyCast, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
 use shared::components::minigame::bar_fill::BarFillState;
@@ -141,7 +141,7 @@ pub fn process_player_inputs(
         Option<&mut GridState>,
         Option<&mut DpsGridTrigger>,
         Option<&PlayerSelectedTarget>,
-    ), With<PlayerId>>,
+    ), (With<PlayerId>, Without<Dead>)>,
     enemy_query: Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
     mut damage_writer: MessageWriter<DamageEvent>,
 ) {
@@ -804,7 +804,7 @@ pub struct DamageOverTimes(pub Vec<DamageOverTime>);
 /// crosses its interval boundary. Removes entries that have fired their last tick.
 pub fn tick_dots(
     time: Res<Time>,
-    mut targets: Query<(Entity, &mut DamageOverTimes)>,
+    mut targets: Query<(Entity, &mut DamageOverTimes), Without<Dead>>,
     mut damage_writer: MessageWriter<DamageEvent>,
 ) {
     let dt = time.delta_secs();
@@ -879,6 +879,91 @@ pub fn apply_disruption_events(
         }
         if let Ok(mut bf) = bars.get_mut(ev.target) {
             bf.drain_pending += DRAIN_BF * mag;
+        }
+    }
+}
+
+// ── Death transition ─────────────────────────────────────────────────────────
+
+/// Detects entities whose HP has just hit zero and transitions them to a
+/// `Dead` state. Strips active DoTs (no posthumous ticks), clears mob threat
+/// lists, zeroes velocity so corpses stop drifting, cancels any in-flight
+/// telegraphed cast, and (for players) drops the active stance and wipes the
+/// stance-tied minigame state. Runs after damage and disruption resolution so
+/// HP is the post-tick value.
+pub fn apply_death_transition(
+    mut commands: Commands,
+    mut candidates: Query<
+        (
+            Entity,
+            &Health,
+            Option<&mut CombatState>,
+            Option<&mut ArcState>,
+            Option<&mut SecondaryArcState>,
+            Option<&mut CubeState>,
+            Option<&mut GridState>,
+            Option<&mut DpsGridTrigger>,
+        ),
+        Without<Dead>,
+    >,
+    mut threat_q: Query<&mut ThreatList>,
+    mut enemy_vel_q: Query<&mut EnemyVelocity>,
+    mut player_vel_q: Query<&mut PlayerVelocity>,
+    enemy_cast_q: Query<(), With<EnemyCast>>,
+) {
+    for (
+        entity,
+        health,
+        mut combat_opt,
+        mut arc_opt,
+        mut secondary_opt,
+        mut cube_opt,
+        mut grid_opt,
+        mut grid_trigger_opt,
+    ) in candidates.iter_mut()
+    {
+        if health.current > 0.0 {
+            continue;
+        }
+        let mut e = commands.entity(entity);
+        e.insert(Dead);
+        e.remove::<DamageOverTimes>();
+        if enemy_cast_q.contains(entity) {
+            e.remove::<EnemyCast>();
+        }
+
+        // For players: drop the active stance and reset stance-bound minigame
+        // state. Without this, the post-death corpse keeps a non-None
+        // active_stance and a still-running arc/cube/grid that no system can
+        // reach (input is gated Without<Dead>) — and a future respawn would
+        // inherit that stale state instead of starting clean.
+        if let Some(combat) = combat_opt.as_deref_mut() {
+            if combat.active_stance.is_some() {
+                combat.active_stance = None;
+                reset_on_stance_change(
+                    arc_opt.as_deref_mut(),
+                    secondary_opt.as_deref_mut(),
+                    cube_opt.as_deref_mut(),
+                    grid_opt.as_deref_mut(),
+                    grid_trigger_opt.as_deref_mut(),
+                );
+            }
+        }
+
+        if let Ok(mut tl) = threat_q.get_mut(entity) {
+            if !tl.entries.is_empty() {
+                tl.entries.clear();
+                tl.dirty = true;
+            }
+        }
+        if let Ok(mut v) = enemy_vel_q.get_mut(entity) {
+            v.vx = 0.0;
+            v.vz = 0.0;
+        }
+        if let Ok(mut v) = player_vel_q.get_mut(entity) {
+            v.vx = 0.0;
+            v.vy = 0.0;
+            v.vz = 0.0;
         }
     }
 }

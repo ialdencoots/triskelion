@@ -19,7 +19,7 @@ impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         use channels::{GameChannel, PositionChannel};
         use components::{
-            combat::{AbilityCooldowns, CombatState, Health, ReplicatedThreatList, Resistances},
+            combat::{AbilityCooldowns, CombatState, Dead, Health, ReplicatedThreatList, Resistances},
             enemy::{BossMarker, EnemyCast, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
@@ -149,6 +149,13 @@ impl Plugin for SharedPlugin {
         app.register_component::<AbilityCooldowns>();
         app.register_component::<ReplicatedThreatList>();
         app.register_component::<Resistances>();
+        // Insert-only marker; once dead an entity stays dead until despawn or
+        // (future) respawn explicitly removes it.
+        app.register_component::<Dead>()
+            .with_replication_config(ComponentReplicationConfig {
+                replicate_once: true,
+                ..default()
+            });
 
         // ── Messages (local, non-networked) ──────────────────────────────────
         app.add_message::<events::combat::DamageEvent>();

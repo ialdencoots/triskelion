@@ -8,6 +8,7 @@ use crate::plugin::AppState;
 
 pub mod camera;
 pub mod controller;
+pub mod death;
 pub mod enemies;
 pub mod instance;
 pub mod players;
@@ -169,6 +170,12 @@ impl Plugin for WorldPlugin {
         // Observers: spawn/despawn telegraph disc when EnemyCast arrives / is removed.
         app.add_observer(telegraph::on_enemy_cast_added);
         app.add_observer(telegraph::on_enemy_cast_removed);
+        // Observers: react to Dead marker — tip the capsule onto its side and
+        // freeze position. Two observers because the local player's rendered
+        // entity (PlayerMarker) is separate from the server-replicated entity
+        // that carries the Dead marker.
+        app.add_observer(death::on_dead_added);
+        app.add_observer(death::on_dead_added_local);
 
         app.add_systems(
             Update,

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 
 use shared::channels::GameChannel;
+use shared::components::combat::Dead;
 use shared::components::enemy::EnemyMarker;
 use shared::components::player::{PlayerId, RoleStance, SelectedMobOrPlayer};
 use shared::inputs::{AbilityInput, MinigameInput, PlayerInput};
@@ -17,6 +18,7 @@ use crate::ui::hud::chat::ChatInputState;
 use crate::world::camera::OrbitState;
 use crate::world::controller::world_move_dir;
 use crate::world::instance::CurrentInstanceTerrain;
+use crate::world::players::OwnServerEntity;
 use crate::world::selection::SelectedTarget;
 use crate::world::terrain::PlayerMarker;
 
@@ -53,12 +55,25 @@ pub fn gather_and_send_input(
     terrain: Res<CurrentInstanceTerrain>,
     bindings: Res<ActionBarBindings>,
     chat_state: Res<ChatInputState>,
+    own_entity: Option<Res<OwnServerEntity>>,
+    dead_q: Query<(), With<Dead>>,
     mut pulse: ResMut<SlotClickPulse>,
     player_query: Query<(&Transform, &LinearVelocity), With<PlayerMarker>>,
     mut sender_query: Query<&mut MessageSender<PlayerInput>>,
     mut char_facing: Local<f32>,
 ) {
     let Ok(mut sender) = sender_query.single_mut() else { return };
+
+    // Skip input entirely while the local player is dead. The server's
+    // input-processing query already filters Without<Dead>, but suppressing on
+    // the client too keeps a stale click-pulse from being smuggled across the
+    // first frame after a respawn (when one is added) and avoids the bandwidth.
+    if let Some(own) = own_entity.as_deref() {
+        if dead_q.contains(own.0) {
+            pulse.0 = [false; ActionSlot::COUNT];
+            return;
+        }
+    }
 
     // While the chat input is focused, suppress keyboard-driven actions:
     // typed characters would otherwise also fire abilities / toggle stances.

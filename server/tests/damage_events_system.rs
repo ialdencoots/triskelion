@@ -14,7 +14,7 @@ mod common;
 
 use bevy::prelude::*;
 
-use shared::components::combat::{CombatState, DamageType, Health, Resistances};
+use shared::components::combat::{CombatState, DamageType, Dead, Health, Resistances};
 use shared::components::enemy::EnemyMarker;
 use shared::components::player::PlayerId;
 use shared::events::combat::DamageEvent;
@@ -185,6 +185,29 @@ fn enemy_to_player_applies_damage_without_generating_threat() {
 
     let health = app.world().entity(target).get::<Health>().unwrap();
     assert_eq!(health.current, 70.0);
+}
+
+#[test]
+fn damage_to_dead_player_is_ignored() {
+    // The is_alive() check on the player branch of apply_damage_events keeps
+    // posthumous DoT ticks (or any in-flight enemy hit) from cratering an HP
+    // bar that's already at 0. Mirrors `damage_to_dead_enemy_is_ignored`.
+    let mut app = damage_app();
+    let attacker = app.world_mut().spawn(EnemyMarker).id();
+    let target = app
+        .world_mut()
+        .spawn((
+            PlayerId(1),
+            Health { current: 0.0, max: 100.0 }, // already dead
+            Dead,
+            CombatState::default(),
+        ))
+        .id();
+
+    send(&mut app, ev(attacker, target, 30.0, DamageType::Physical));
+
+    let health = app.world().entity(target).get::<Health>().unwrap();
+    assert_eq!(health.current, 0.0, "HP must stay clamped at 0 — no posthumous damage");
 }
 
 #[test]

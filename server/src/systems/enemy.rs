@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use lightyear::prelude::server::*;
 
 use shared::components::combat::{
-    AttackShape, Health, TargetSelector,
+    AttackShape, Dead, Health, TargetSelector,
 };
 use shared::components::enemy::{
     EnemyAbilityCooldowns, EnemyCast, EnemyPosition, EnemyVelocity, MobTarget,
@@ -40,13 +40,15 @@ fn select_threat_target(
     mob_iid: u32,
     mob_pos: &EnemyPosition,
     leash_range: f32,
-    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
 ) -> Option<(f32, f32, f32, Entity)> {
     if threat_list.entries.is_empty() {
         return None;
     }
     threat_list.entries.iter()
         .filter_map(|entry| {
+            // The query filter skips Dead entries via Err(_), so an aged
+            // threat entry pointing at a corpse drops out automatically.
             let Ok((entity, _, ppos, piid, health)) = player_query.get(entry.player_entity) else { return None };
             if piid.0 != mob_iid { return None; }
             if !health.is_alive() { return None; }
@@ -92,7 +94,7 @@ const SEPARATION_STRENGTH: f32 = 1.2;
 /// Returns `(dist, dx, dz, entity)` for the nearest player in the same instance
 /// within `max_dist` world units. Pass `f32::INFINITY` for no distance cap.
 fn find_nearest_player_in_instance(
-    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    player_query: &Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
     iid: u32,
     mob_pos: &EnemyPosition,
     max_dist: f32,
@@ -149,8 +151,8 @@ fn melee_spread(vel: &mut EnemyVelocity, sep: Vec2, to_target: Vec2) {
 pub fn tick_enemy_walk(
     time: Res<Time>,
     reg: Res<InstanceRegistry>,
-    mut mob_query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &mut MobBehavior, &InstanceId, &mut ThreatList, &mut MobTarget)>,
-    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    mut mob_query: Query<(&mut EnemyPosition, &mut EnemyVelocity, &mut MobBehavior, &InstanceId, &mut ThreatList, &mut MobTarget), Without<Dead>>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
@@ -348,7 +350,7 @@ fn has_los(
 fn top_threat_target<'a>(
     threat_list: &ThreatList,
     mob_iid: u32,
-    player_query: &'a Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    player_query: &'a Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
 ) -> Option<(Entity, u64, f32, f32, f32)> {
     threat_list.entries.iter()
         .max_by(|a, b| cmp_f32(a.threat, b.threat))
@@ -377,8 +379,8 @@ pub fn tick_enemy_abilities(
         &ThreatList,
         &mut EnemyAbilityCooldowns,
         Option<&EnemyCast>,
-    )>,
-    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    ), Without<Dead>>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
     mut damage_writer: MessageWriter<DamageEvent>,
     mut disruption_writer: MessageWriter<DisruptionEvent>,
 ) {
@@ -488,8 +490,8 @@ pub fn tick_enemy_casts(
         &InstanceId,
         &mut EnemyCast,
         &mut EnemyAbilityCooldowns,
-    )>,
-    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health)>,
+    ), Without<Dead>>,
+    player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
     mut damage_writer: MessageWriter<DamageEvent>,
     mut disruption_writer: MessageWriter<DisruptionEvent>,
 ) {

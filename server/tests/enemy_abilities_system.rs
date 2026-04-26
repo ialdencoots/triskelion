@@ -22,7 +22,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use shared::components::combat::{
-    AbilityKind, AttackShape, DamageType, DisruptionKind, Health,
+    AbilityKind, AttackShape, DamageType, Dead, DisruptionKind, Health,
 };
 use shared::components::enemy::{
     EnemyAbilityCooldowns, EnemyCast, EnemyMarker, EnemyPosition,
@@ -350,4 +350,48 @@ fn single_cast_resolves_only_to_locked_target() {
     assert_eq!(damage.len(), 1, "single shape should hit exactly one target");
     assert_eq!(damage[0].target, locked);
     assert_ne!(damage[0].target, bystander, "bystander must not be hit");
+}
+
+// ── Death gating ────────────────────────────────────────────────────────────
+
+#[test]
+fn dead_mob_does_not_auto_attack() {
+    let mut app = enemy_app();
+    let player = spawn_player(&mut app, 1, 0, (1.0, 0.0, 0.0));
+    let mob = spawn_mob(&mut app, MobKind::Goblin, 0, (0.0, 0.0, 0.0), &[(player, 10.0)]);
+    app.world_mut().entity_mut(mob).insert(Dead);
+
+    common::advance(&mut app, Duration::from_millis(16));
+
+    assert!(
+        app.world().resource::<CapturedDamage>().0.is_empty(),
+        "a Dead mob must not fire its auto-attack",
+    );
+}
+
+#[test]
+fn mob_skips_dead_player_in_threat_list() {
+    // Threat list points at a corpse — Without<Dead> on the player query
+    // turns the entry's get() into Err so it's filtered out, and no
+    // DamageEvent is emitted. (Pre-existing behavior of top_threat_target:
+    // when the top entry doesn't resolve to a valid live player, the system
+    // returns None for this tick rather than falling back to second-highest.
+    // That fallback would be a separate, unrelated improvement.)
+    let mut app = enemy_app();
+    let corpse = spawn_player(&mut app, 1, 0, (1.0, 0.0, 0.0));
+    app.world_mut().entity_mut(corpse).insert(Dead);
+    spawn_mob(
+        &mut app,
+        MobKind::Goblin,
+        0,
+        (0.0, 0.0, 0.0),
+        &[(corpse, 100.0)],
+    );
+
+    common::advance(&mut app, Duration::from_millis(16));
+
+    assert!(
+        app.world().resource::<CapturedDamage>().0.is_empty(),
+        "a dead top-threat target must not be auto-attacked",
+    );
 }

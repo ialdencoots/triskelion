@@ -64,6 +64,7 @@ impl Plugin for HudPlugin {
                 frames::update_target_frame_visibility,
                 frames::update_target_name,
                 frames::update_target_health_fill,
+                frames::update_player_health_fill,
                 enemy_bars::update_enemy_bars,
                 damage_numbers::spawn_damage_numbers,
                 damage_numbers::update_damage_numbers,

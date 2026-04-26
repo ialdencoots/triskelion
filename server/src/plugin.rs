@@ -55,6 +55,10 @@ impl Plugin for ServerGamePlugin {
                     enemy::tick_enemy_abilities,
                     combat::apply_damage_events,
                     combat::apply_disruption_events,
+                    // Death transition observes post-damage HP and inserts
+                    // Dead. Must come after apply_damage_events so it sees
+                    // the tick's final HP, not last tick's value.
+                    combat::apply_death_transition,
                 ).chain(),
                 combat::process_target_selections,
                 combat::tick_ability_cooldowns,

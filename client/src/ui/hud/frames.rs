@@ -27,9 +27,9 @@ pub struct PlayerFrameRoot;
 #[derive(Component)]
 pub struct TargetFrameRoot;
 
-/// Marker for the green fill inside a health bar.
+/// Marks the health fill inside the *player* frame.
 #[derive(Component)]
-pub struct HealthFill;
+pub struct PlayerHealthFill;
 
 /// Marks the health fill inside the *target* frame.
 #[derive(Component)]
@@ -123,9 +123,11 @@ fn spawn_frame_contents(parent: &mut ChildSpawnerCommands, accent: Color, name: 
 
             col.spawn(health_bar::bar_bundle(10.0))
                 .with_children(|bar| {
-                    let mut fill_cmd = bar.spawn((HealthFill, health_bar::fill_bundle()));
+                    let mut fill_cmd = bar.spawn(health_bar::fill_bundle());
                     if is_target {
                         fill_cmd.insert(TargetHealthFill);
+                    } else {
+                        fill_cmd.insert(PlayerHealthFill);
                     }
                 });
         });
@@ -220,5 +222,20 @@ pub fn update_target_health_fill(
         None => 100.0,
     };
 
+    node.width = Val::Percent(pct);
+}
+
+/// Drives the player frame's health fill width from the local player's `Health`.
+pub fn update_player_health_fill(
+    own_entity: Option<Res<OwnServerEntity>>,
+    health_query: Query<&Health>,
+    mut fill_query: Query<&mut Node, With<PlayerHealthFill>>,
+) {
+    let Ok(mut node) = fill_query.single_mut() else { return };
+    let pct = own_entity
+        .as_ref()
+        .and_then(|own| health_query.get(own.0).ok())
+        .map(health_bar::percent)
+        .unwrap_or(100.0);
     node.width = Val::Percent(pct);
 }
