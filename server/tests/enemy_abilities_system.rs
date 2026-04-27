@@ -138,7 +138,10 @@ fn auto_attack_fires_at_top_threat_target_in_range() {
     let damage = &app.world().resource::<CapturedDamage>().0;
     let disruption = &app.world().resource::<CapturedDisruption>().0;
     assert_eq!(damage.len(), 1, "exactly one auto-attack DamageEvent");
-    assert_eq!(disruption.len(), 1, "exactly one auto-attack DisruptionEvent");
+    // Disruption is now attached to the DamageEvent and emitted by
+    // apply_damage_events scaled by mitigation. tick_enemy_abilities itself
+    // no longer writes DisruptionEvents directly.
+    assert!(disruption.is_empty(), "tick_enemy_abilities does not emit DisruptionEvent directly");
 
     let dmg = &damage[0];
     assert_eq!(dmg.attacker, mob);
@@ -147,10 +150,9 @@ fn auto_attack_fires_at_top_threat_target_in_range() {
     assert_eq!(dmg.ty, DamageType::Physical);
     assert_eq!(dmg.quality, 1.0);
 
-    let disr = &disruption[0];
-    assert_eq!(disr.target, player);
-    assert!(matches!(disr.profile.kind, DisruptionKind::Spike));
-    assert!((disr.profile.magnitude - 0.15).abs() < 1e-5);
+    let disr = dmg.disruption.expect("auto-attack should attach a disruption profile");
+    assert!(matches!(disr.kind, DisruptionKind::Spike));
+    assert!((disr.magnitude - 0.15).abs() < 1e-5);
 
     let cd = app.world().entity(mob).get::<EnemyAbilityCooldowns>().unwrap();
     assert!(cd.auto_cd > 1.0, "auto_cd should reset to MeleeAuto cooldown (1.2s)");

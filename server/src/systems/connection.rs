@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 
 use shared::channels::GameChannel;
-use shared::components::combat::{AbilityCooldowns, CombatState, Health};
+use shared::components::combat::{AbilityCooldowns, CombatState, Health, ReplicatedMitigationPool};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::{
     arc::{ArcState, SecondaryArcState}, bar_fill::BarFillState, cube::CubeState,
@@ -20,7 +20,7 @@ use shared::instances::{find_def, terrain_surface_y, InstanceKind};
 use shared::messages::{InstanceEnteredMsg, RequestInstanceMsg, RequestSpawnMsg};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
-use super::combat::{reset_on_stance_change, ThreatModifiers};
+use super::combat::{reset_on_stance_change, CritStreak, MitigationPool, ThreatModifiers};
 use super::instances::{create_instance, populate_instance, remove_player_from_instance, InstanceRegistry};
 
 /// Spread spawn positions in a circle of 8 slots so clients don't stack on top
@@ -168,6 +168,15 @@ pub fn process_spawn_requests(
                         CubeState::default(),
                         GridState::default(),
                         DpsGridTrigger::default(),
+                        // Heal stance is available to any Physical subclass —
+                        // the mitigation pool is gated by stance, not subclass.
+                        // Cost when not in Heal stance is just two empty
+                        // components, so attach them universally.
+                        MitigationPool::default(),
+                        CritStreak::default(),
+                        // Replicated mirror — server keeps it in sync each
+                        // tick so clients can render the pool fill.
+                        ReplicatedMitigationPool::default(),
                     ));
                 }
                 Class::Arcane => {

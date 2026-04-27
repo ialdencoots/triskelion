@@ -36,6 +36,17 @@ pub struct DamageNumberMsg {
     pub is_crit: bool,
 }
 
+/// Broadcast when a heal lands: tells clients to pop a floating heal number
+/// above `target`. Sent to both the healer and the ward so each can see the
+/// effect. Amount is the gross heal value (overheal not subtracted), so the
+/// number reads consistently even when the ward is at full HP.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct HealNumberMsg {
+    pub target: Entity,
+    pub amount: f32,
+    pub is_crit: bool,
+}
+
 /// One entry in the combat log. Sent to every player in the attacker's or
 /// target's party when a `DamageEvent` resolves. Names are serialized as
 /// strings so receivers don't need the attacker or target entity replicated.
@@ -43,13 +54,24 @@ pub struct DamageNumberMsg {
 pub struct CombatLogMsg {
     pub attacker_name: String,
     pub target_name:   String,
-    /// Post-resist, post-modifier damage landed on `target`.
+    /// Post-resist, post-modifier damage landed on `target`. For heals
+    /// (`is_heal = true`) this is the gross heal amount including overheal.
     pub amount:        f32,
     pub ty:            DamageType,
     pub is_crit:       bool,
     /// True if the hit was dealt by a player (either the receiver or a party
     /// member). Used to pick log-line color — outgoing vs. incoming read.
     pub attacker_is_player: bool,
+    /// Per-blocker (healer name, blocked amount) pairs for any mitigation
+    /// that absorbed damage on this hit. Empty for hits with no mitigation
+    /// and for the player→enemy direction (no healer mitigation flows there).
+    /// Rendered as "X hits A for Z (B blocked Y, B2 blocked Y2)".
+    #[serde(default)]
+    pub blocks: Vec<(String, f32)>,
+    /// True when this entry represents a heal rather than a damage hit.
+    /// Renders as "X heals A for Z" with a heal-themed color.
+    #[serde(default)]
+    pub is_heal: bool,
 }
 
 /// A party-chat line echoed to every player in the sender's group. The server
@@ -132,6 +154,12 @@ impl MapEntities for SelectTargetMsg {
 }
 
 impl MapEntities for DamageNumberMsg {
+    fn map_entities<M: EntityMapper>(&mut self, mapper: &mut M) {
+        self.target = mapper.get_mapped(self.target);
+    }
+}
+
+impl MapEntities for HealNumberMsg {
     fn map_entities<M: EntityMapper>(&mut self, mapper: &mut M) {
         self.target = mapper.get_mapped(self.target);
     }

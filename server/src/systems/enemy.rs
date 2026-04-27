@@ -9,7 +9,7 @@ use shared::components::enemy::{
 };
 use shared::components::instance::InstanceId;
 use shared::components::player::{PlayerId, PlayerPosition};
-use shared::events::combat::{DamageEvent, DisruptionEvent};
+use shared::events::combat::DamageEvent;
 use shared::instances::{find_def, layout_sdf, terrain_surface_y, InstanceKind};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
@@ -382,7 +382,6 @@ pub fn tick_enemy_abilities(
     ), Without<Dead>>,
     player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
     mut damage_writer: MessageWriter<DamageEvent>,
-    mut disruption_writer: MessageWriter<DisruptionEvent>,
 ) {
     let dt = time.delta_secs();
 
@@ -421,10 +420,7 @@ pub fn tick_enemy_abilities(
                         multipliers: 1.0,
                         quality:     1.0,
                         is_crit:     false,
-                    });
-                    disruption_writer.write(DisruptionEvent {
-                        target:  target_entity,
-                        profile: auto_stats.disruption,
+                        disruption:  Some(auto_stats.disruption),
                     });
                     cooldowns.auto_cd = auto_stats.cooldown;
                 }
@@ -493,7 +489,6 @@ pub fn tick_enemy_casts(
     ), Without<Dead>>,
     player_query: Query<(Entity, &PlayerId, &PlayerPosition, &InstanceId, &Health), Without<Dead>>,
     mut damage_writer: MessageWriter<DamageEvent>,
-    mut disruption_writer: MessageWriter<DisruptionEvent>,
 ) {
     let dt = time.delta_secs();
 
@@ -549,7 +544,7 @@ pub fn tick_enemy_casts(
                     if alive {
                         emit_attack_hit(
                             mob_entity, pent, &ability_stats,
-                            &mut damage_writer, &mut disruption_writer,
+                            &mut damage_writer,
                         );
                     }
                 }
@@ -563,7 +558,7 @@ pub fn tick_enemy_casts(
                     if dx * dx + dz * dz <= r2 {
                         emit_attack_hit(
                             mob_entity, pent, &ability_stats,
-                            &mut damage_writer, &mut disruption_writer,
+                            &mut damage_writer,
                         );
                     }
                 }
@@ -586,7 +581,7 @@ pub fn tick_enemy_casts(
                     if fwd.dot(to) >= cos_min {
                         emit_attack_hit(
                             mob_entity, pent, &ability_stats,
-                            &mut damage_writer, &mut disruption_writer,
+                            &mut damage_writer,
                         );
                     }
                 }
@@ -597,15 +592,17 @@ pub fn tick_enemy_casts(
     }
 }
 
-/// Write the damage + disruption pair for one resolved enemy hit. Quality is
-/// hard-coded to 1.0 because enemies don't have minigame commit quality —
-/// the ability's `damage` field is already the post-quality number.
+/// Write the damage event for one resolved enemy hit. The disruption profile
+/// rides on the `DamageEvent`; `apply_damage_events` emits a scaled
+/// `DisruptionEvent` post-mitigation so absorbed damage produces less
+/// disruption. Quality is hard-coded to 1.0 because enemies don't have
+/// minigame commit quality — the ability's `damage` field is already the
+/// post-quality number.
 fn emit_attack_hit(
     attacker: Entity,
     target: Entity,
     stats: &shared::components::combat::AbilityStats,
     damage_writer: &mut MessageWriter<DamageEvent>,
-    disruption_writer: &mut MessageWriter<DisruptionEvent>,
 ) {
     damage_writer.write(DamageEvent {
         attacker,
@@ -616,9 +613,6 @@ fn emit_attack_hit(
         multipliers: 1.0,
         quality:     1.0,
         is_crit:     false,
-    });
-    disruption_writer.write(DisruptionEvent {
-        target,
-        profile: stats.disruption,
+        disruption:  Some(stats.disruption),
     });
 }

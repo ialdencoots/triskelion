@@ -12,6 +12,11 @@ use crate::components::combat::{DamageType, DisruptionProfile};
 /// - `multipliers` is the product of buff/debuff multipliers. Default 1.0.
 /// - `quality` is the minigame commit quality in [0, 1]. Default 1.0 for
 ///   non-minigame sources (DoT ticks, fixed-damage abilities).
+/// - `disruption`, when present, is the rhythm-disruption profile of the
+///   attack. The damage resolver emits a `DisruptionEvent` with magnitude
+///   scaled by `final / pre_mitigation` so absorbed damage produces
+///   proportionally less disruption. `None` means no disruption (player
+///   commits, DoT ticks).
 #[derive(Message, Clone, Debug)]
 pub struct DamageEvent {
     pub attacker: Entity,
@@ -25,10 +30,12 @@ pub struct DamageEvent {
     /// actual crit damage scaling is already folded into `multipliers` by the
     /// source. This flag exists so the client can render crits distinctly.
     pub is_crit: bool,
+    pub disruption: Option<DisruptionProfile>,
 }
 
 impl DamageEvent {
-    /// Convenience for a single-hit event with no modifier stack. Non-crit.
+    /// Convenience for a single-hit event with no modifier stack. Non-crit,
+    /// no disruption.
     pub fn hit(attacker: Entity, target: Entity, base: f32, ty: DamageType, quality: f32) -> Self {
         Self {
             attacker,
@@ -39,6 +46,7 @@ impl DamageEvent {
             multipliers: 1.0,
             quality,
             is_crit: false,
+            disruption: None,
         }
     }
 }

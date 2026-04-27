@@ -11,6 +11,7 @@ pub mod damage_numbers;
 pub mod enemy_bars;
 pub mod frames;
 pub mod group_frame;
+pub mod heal_numbers;
 pub mod health_bar;
 pub mod instance_button;
 pub mod minigame_anchor;
@@ -80,6 +81,18 @@ impl Plugin for HudPlugin {
                 target_panel::compute_threat_display,
                 target_panel::apply_threat_panel.after(target_panel::compute_threat_display),
                 target_panel::handle_tot_interaction,
+            ),
+        );
+        // Mitigation pool bar + tier markers + heal numbers live in their
+        // own add_systems because the main HUD tuple above is at Bevy's
+        // tuple-arity limit.
+        app.add_systems(
+            Update,
+            (
+                frames::update_player_mitigation_bar,
+                frames::update_player_mitigation_markers,
+                heal_numbers::spawn_heal_numbers,
+                heal_numbers::update_heal_numbers,
             ),
         );
 

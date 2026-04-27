@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use shared::components::combat::{CombatState, DamageType, Dead, Health, Resistances};
 use shared::components::enemy::EnemyMarker;
 use shared::components::player::PlayerId;
-use shared::events::combat::DamageEvent;
+use shared::events::combat::{DamageEvent, DisruptionEvent};
 
 use server::systems::combat::{self, ThreatList, ThreatModifiers};
 
@@ -36,6 +36,9 @@ fn seed_damage(
 fn damage_app() -> App {
     let mut app = common::minimal_app();
     app.add_message::<DamageEvent>();
+    // apply_damage_events emits scaled DisruptionEvents post-mitigation, so
+    // the message type has to be registered even if no test consumes it.
+    app.add_message::<DisruptionEvent>();
     app.init_resource::<PendingDamage>();
     // Seed must run before the resolver so events are visible same-tick.
     app.add_systems(Update, (seed_damage, combat::apply_damage_events).chain());
@@ -52,6 +55,7 @@ fn ev(attacker: Entity, target: Entity, base: f32, ty: DamageType) -> DamageEven
         multipliers: 1.0,
         quality: 1.0,
         is_crit: false,
+        disruption: None,
     }
 }
 

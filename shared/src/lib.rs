@@ -19,7 +19,10 @@ impl Plugin for SharedPlugin {
     fn build(&self, app: &mut App) {
         use channels::{GameChannel, PositionChannel};
         use components::{
-            combat::{AbilityCooldowns, CombatState, Dead, Health, ReplicatedThreatList, Resistances},
+            combat::{
+                AbilityCooldowns, CombatState, Dead, Health, ReplicatedMitigationPool,
+                ReplicatedThreatList, Resistances,
+            },
             enemy::{BossMarker, EnemyCast, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity, MobTarget},
             instance::InstanceId,
             minigame::{
@@ -30,7 +33,7 @@ impl Plugin for SharedPlugin {
             },
             player::{GroupId, PlayerClass, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerSubclass, PlayerVelocity},
         };
-        use messages::{ChatMsg, ChatSendMsg, CombatLogMsg, DamageNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
+        use messages::{ChatMsg, ChatSendMsg, CombatLogMsg, DamageNumberMsg, HealNumberMsg, InstanceEnteredMsg, PlayerDespawnedMsg, PlayerSpawnedMsg, RequestInstanceMsg, RequestSpawnMsg, SelectTargetMsg};
         #[cfg(debug_assertions)]
         use messages::DevApplyDotMsg;
 
@@ -79,6 +82,10 @@ impl Plugin for SharedPlugin {
             .add_direction(NetworkDirection::ServerToClient);
 
         app.register_message::<DamageNumberMsg>()
+            .add_direction(NetworkDirection::ServerToClient)
+            .add_map_entities();
+
+        app.register_message::<HealNumberMsg>()
             .add_direction(NetworkDirection::ServerToClient)
             .add_map_entities();
 
@@ -148,6 +155,7 @@ impl Plugin for SharedPlugin {
         app.register_component::<CombatState>();
         app.register_component::<AbilityCooldowns>();
         app.register_component::<ReplicatedThreatList>();
+        app.register_component::<ReplicatedMitigationPool>();
         app.register_component::<Resistances>();
         // Insert-only marker; once dead an entity stays dead until despawn or
         // (future) respawn explicitly removes it.

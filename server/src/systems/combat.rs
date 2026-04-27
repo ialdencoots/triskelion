@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Dead, DisruptionKind, Health, ReplicatedThreatList, Resistances};
+use shared::components::combat::{AbilityCooldowns, CombatState, DamageType, Dead, DisruptionKind, DisruptionProfile, Health, ReplicatedMitigationPool, ReplicatedThreatList, Resistances};
 use shared::components::enemy::{EnemyCast, EnemyMarker, EnemyName, EnemyPosition, EnemyVelocity};
 use shared::components::instance::InstanceId;
 use shared::components::minigame::arc::{ArcState, SecondaryArcState};
@@ -12,13 +12,14 @@ use shared::components::minigame::cube::{CubeEdge, CubeState};
 use shared::components::minigame::grid::{DpsGridTrigger, GridDir, GridState, MIN_GRID_BUDGET};
 use shared::components::minigame::heartbeat::HeartbeatState;
 use shared::components::player::{
-    GroupId, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget, PlayerVelocity, RoleStance, SelectedMobOrPlayer,
+    GroupId, PlayerId, PlayerName, PlayerPosition, PlayerSelectedTarget,
+    PlayerVelocity, RoleStance, SelectedMobOrPlayer,
 };
 use shared::channels::GameChannel;
 use shared::events::combat::{DamageEvent, DisruptionEvent};
 use shared::inputs::PlayerInput;
 use shared::instances::{find_def, terrain_surface_y};
-use shared::messages::{CombatLogMsg, DamageNumberMsg, SelectTargetMsg};
+use shared::messages::{CombatLogMsg, DamageNumberMsg, HealNumberMsg, SelectTargetMsg};
 use shared::settings::PLAYER_FLOAT_HEIGHT;
 
 use super::connection::PlayerEntityLink;
@@ -120,6 +121,62 @@ impl ThreatModifiers {
     }
 }
 
+// ── Intercessor mitigation components ────────────────────────────────────────
+
+/// Per-Intercessor pool of damage absorption capacity. Lives on the **healer**
+/// (not the ward) so it persists across ward switches — semantically the
+/// healer's "internalized read of the encounter."
+///
+/// Filled by `emit_arc_mitigation` while the current ward is in combat;
+/// drained by `apply_damage_events` against incoming damage on the ward via
+/// the saturating curve in `desired_absorption`. Bleeds off out of combat in
+/// `tick_mitigation_decay`.
+///
+/// `invuln_until` is set when the healer lands `CRIT_STREAK_INVULN`
+/// consecutive crit commits; while the wall-clock is below it, all incoming
+/// damage on the current ward is fully absorbed.
+#[derive(Component, Default, Debug)]
+pub struct MitigationPool {
+    pub amount: f32,
+    pub invuln_until: f32,
+}
+
+/// Tracks consecutive crit commits on the same ward toward the invuln-streak
+/// reward. Reset by non-crit commits, ward changes, stance changes, or the
+/// current ward going out of combat.
+#[derive(Component, Default, Debug)]
+pub struct CritStreak {
+    pub count: u8,
+    pub last_ward: Option<u64>,
+}
+
+// ── Mitigation tunables ───────────────────────────────────────────────────────
+
+/// Pool added per Intercessor commit at quality=1.0. Symmetric with `BASE_DAMAGE`.
+const BASE_MITIGATION: f32 = 15.0;
+/// SCALE in the saturating absorption curve. Picked so `SCALE / SATURATION_KNEE = 0.85`,
+/// the maximum fraction absorbed at small incoming hits with `mean_q = 1.0`.
+const SATURATION_SCALE: f32 = 25.5;
+/// Knee of the saturating curve. Hits much smaller than this absorb at near-max
+/// fraction; hits much larger saturate at `mean_q * SATURATION_SCALE`.
+const SATURATION_KNEE: f32 = 30.0;
+/// Flat heal applied to the ward on a crit commit.
+const CRIT_HEAL_AMOUNT: f32 = 8.0;
+/// Consecutive crits on the same ward required to grant the invuln window.
+const CRIT_STREAK_INVULN: u8 = 3;
+/// Duration of the invuln window granted by the streak.
+const INVULN_DURATION_SECS: f32 = 0.75;
+/// Linear decay rate of the mitigation pool while the ward is out of combat.
+const OOC_DECAY_PER_SEC: f32 = 5.0;
+/// Healer-stance facing cone: 270° (cos(135°) ≈ -0.707) — only the rear ~90°
+/// arc is excluded. Looser than the damage-stance 120° cone since healer
+/// posture is about awareness, not aim.
+const FACING_COS_MIN_HEAL: f32 = -0.707;
+/// Threat per HP prevented (mirrors healing's 0.4 rate).
+const HEAL_THREAT_PER_HP: f32 = 0.4;
+/// Melee reach in world units. Shared between damage and mitigation paths.
+pub(crate) const MELEE_RANGE: f32 = 4.0;
+
 // ── Threat systems ────────────────────────────────────────────────────────────
 
 const PLAYER_SPEED: f32 = 6.0;
@@ -141,9 +198,11 @@ pub fn process_player_inputs(
         Option<&mut GridState>,
         Option<&mut DpsGridTrigger>,
         Option<&PlayerSelectedTarget>,
+        &PlayerId,
     ), (With<PlayerId>, Without<Dead>)>,
     enemy_query: Query<(&EnemyPosition, Option<&Health>), With<EnemyMarker>>,
     mut damage_writer: MessageWriter<DamageEvent>,
+    mut mitigation_writer: MessageWriter<MitigationCommitEvent>,
 ) {
     let dt = time.delta_secs();
 
@@ -161,6 +220,7 @@ pub fn process_player_inputs(
             mut grid_opt,
             mut grid_trigger_opt,
             target_opt,
+            own_pid,
         )) = player_query.get_mut(link.0) else { continue };
 
         if let Some(input) = last_input {
@@ -267,15 +327,36 @@ pub fn process_player_inputs(
 
                         process_arc_commit(arc);
                         if was_unlocked {
-                            emit_arc_damage(
-                                arc.commit.last_quality,
-                                input.facing_yaw,
-                                link.0,
-                                &pos,
-                                target_opt,
-                                &enemy_query,
-                                &mut damage_writer,
-                            );
+                            // Heal stance routes to mitigation regardless of
+                            // Physical subclass. Per the design, any subclass
+                            // can enter any role; subclass determines efficacy
+                            // within it, not behavior. In Heal stance commits
+                            // never deal damage. Effective-ward rules live
+                            // in `effective_ward_pid` so dispatch and
+                            // damage-consumption agree.
+                            if combat.active_stance == Some(RoleStance::Heal) {
+                                if let Some(ward_pid) = effective_ward_pid(target_opt, own_pid.0) {
+                                    mitigation_writer.write(MitigationCommitEvent {
+                                        healer: link.0,
+                                        ward_player_id: ward_pid,
+                                        quality: arc.commit.last_quality,
+                                        healer_pos: Vec3::new(pos.x, pos.y, pos.z),
+                                        healer_facing_yaw: input.facing_yaw,
+                                    });
+                                } else {
+                                    debug!("[MIT] healer commit with no target");
+                                }
+                            } else {
+                                emit_arc_damage(
+                                    arc.commit.last_quality,
+                                    input.facing_yaw,
+                                    link.0,
+                                    &pos,
+                                    target_opt,
+                                    &enemy_query,
+                                    &mut damage_writer,
+                                );
+                            }
                         }
 
                         // Post-commit: detect break trigger (DPS only). The
@@ -522,6 +603,69 @@ fn crit_chance(quality: f32) -> f32 {
     }
 }
 
+// ── Mitigation message ───────────────────────────────────────────────────────
+
+/// Server-local message emitted by `process_player_inputs` whenever an
+/// Intercessor in Heal stance lands an arc commit. The actual mitigation work
+/// — ward lookup, range/facing/in-combat checks, pool fill, crit roll, streak
+/// update — happens in `apply_mitigation_commits` running in the same tick.
+///
+/// This split exists because `process_player_inputs` already mutably borrows
+/// most player components for movement; adding cross-player lookups (ward
+/// position, ward Health for crit heal) inline would require ParamSet
+/// gymnastics. Mirrors the `DamageEvent` → `apply_damage_events` pattern.
+#[derive(Message, Clone, Debug)]
+pub struct MitigationCommitEvent {
+    pub healer: Entity,
+    pub ward_player_id: u64,
+    pub quality: f32,
+    pub healer_pos: Vec3,
+    pub healer_facing_yaw: f32,
+}
+
+// ── Mitigation helpers ───────────────────────────────────────────────────────
+
+/// Translates a healer's `PlayerSelectedTarget` into the player ID of their
+/// **effective ward** — the player whose mitigation pool the healer is
+/// actively maintaining. Used at the commit dispatch in
+/// `process_player_inputs` and at the damage consumption in
+/// `apply_damage_events` so both sides agree on who's being warded.
+///
+///   - `Player(pid)` target → ward = that player
+///   - `Mob(_)` target      → ward = self (lets the healer keep an enemy
+///                            targeted to read its HP while still building
+///                            their own pool)
+///   - no target            → no effective ward
+pub(crate) fn effective_ward_pid(
+    target: Option<&PlayerSelectedTarget>,
+    own_pid: u64,
+) -> Option<u64> {
+    match target.and_then(|t| t.0.as_ref()) {
+        Some(SelectedMobOrPlayer::Player(pid)) => Some(*pid),
+        Some(SelectedMobOrPlayer::Mob(_)) => Some(own_pid),
+        None => None,
+    }
+}
+
+/// Desired per-hit absorption from one Intercessor against an `incoming` hit,
+/// given their moving-average commit quality. Saturating curve with
+/// diminishing returns:
+///
+/// `absorbed = mean_q * SCALE * incoming / (incoming + KNEE)`
+///
+/// Properties:
+/// - Strictly less than `incoming` (since `SCALE / KNEE = 0.85 < 1` and the
+///   incoming/(incoming+KNEE) factor is also < 1) — never fully nullifies a hit.
+/// - As `incoming → 0`, the fraction absorbed approaches `mean_q * 0.85`.
+/// - As `incoming → ∞`, the absolute absorbed approaches `mean_q * SCALE`
+///   (saturation cap — big hits are barely dented).
+pub(crate) fn desired_absorption(mean_q: f32, incoming: f32) -> f32 {
+    if mean_q <= 0.0 || incoming <= 0.0 {
+        return 0.0;
+    }
+    mean_q * SATURATION_SCALE * incoming / (incoming + SATURATION_KNEE)
+}
+
 // ── Arc damage emission ──────────────────────────────────────────────────────
 
 /// Gates an arc commit against range/facing/alive checks and, on pass, emits a
@@ -536,8 +680,6 @@ fn emit_arc_damage(
     damage_writer: &mut MessageWriter<DamageEvent>,
 ) {
     const BASE_DAMAGE: f32 = 15.0;
-    /// Melee reach in world units.
-    const MELEE_RANGE: f32 = 4.0;
     // Allow commits within a 120° cone (cos 60° = 0.5) — forgiving but not trivial.
     const FACING_COS_MIN: f32 = 0.5;
 
@@ -596,6 +738,10 @@ fn emit_arc_damage(
         multipliers,
         quality,
         is_crit,
+        // Player commits don't disrupt enemies' rhythm minigames (enemies
+        // don't have one). Attacks that should disrupt minigame state on
+        // players ride disruption attached to the DamageEvent.
+        disruption: None,
     });
 }
 
@@ -621,13 +767,14 @@ fn resolve_damage(ev: &DamageEvent, resist: f32) -> f32 {
 /// The `Without` filters on the two target queries make them provably disjoint
 /// so `&mut Health` on both compiles without a runtime conflict.
 pub fn apply_damage_events(
+    time: Res<Time>,
     mut messages: MessageReader<DamageEvent>,
     mut enemy_targets: Query<
         (&mut Health, &Resistances, &mut ThreatList, Option<&InstanceId>),
         (With<EnemyMarker>, Without<PlayerId>),
     >,
     mut player_targets: Query<
-        (&mut Health, Option<&Resistances>, Option<&InstanceId>),
+        (&mut Health, Option<&Resistances>, Option<&InstanceId>, &PlayerId),
         (With<PlayerId>, Without<EnemyMarker>),
     >,
     threat_mods_query: Query<&ThreatModifiers>,
@@ -637,7 +784,13 @@ pub fn apply_damage_events(
     group_query: Query<&GroupId>,
     mut number_senders: Query<(&PlayerEntityLink, &mut MessageSender<DamageNumberMsg>)>,
     mut log_senders: Query<(&PlayerEntityLink, &mut MessageSender<CombatLogMsg>)>,
+    mut intercessor_query: Query<
+        (Entity, &PlayerId, &CombatState, Option<&PlayerSelectedTarget>, &mut MitigationPool, &ArcState, Option<&InstanceId>),
+        With<PlayerId>,
+    >,
+    mut disruption_writer: MessageWriter<DisruptionEvent>,
 ) {
+    let now = time.elapsed_secs();
     for ev in messages.read() {
         let (atk_is_player, atk_is_enemy, atk_inst) = match attacker_kind_query.get(ev.attacker) {
             Ok((pid, em, inst)) => (pid.is_some(), em.is_some(), inst.map(|i| i.0)),
@@ -672,6 +825,7 @@ pub fn apply_damage_events(
 
             broadcast_combat_log(
                 ev.attacker, ev.target, final_dmg, ev.ty, ev.is_crit, true,
+                Vec::new(), false,
                 &player_name_query, &enemy_name_query, &group_query, &mut log_senders,
             );
 
@@ -699,7 +853,7 @@ pub fn apply_damage_events(
         }
 
         // ── Enemy → Player ─────────────────────────────────────────────────
-        if let Ok((mut health, resist_opt, _target_inst))
+        if let Ok((mut health, resist_opt, target_inst, target_pid))
             = player_targets.get_mut(ev.target)
         {
             if !atk_is_enemy {
@@ -709,18 +863,138 @@ pub fn apply_damage_events(
             if !health.is_alive() { continue; }
 
             let r = resist_opt.map(|r| r.get(ev.ty)).unwrap_or(0.0);
-            let final_dmg = resolve_damage(ev, r);
+            let resolved_dmg = resolve_damage(ev, r);
+            let mut final_dmg = resolved_dmg;
+            let target_inst_id = target_inst.map(|i| i.0);
+            let ward_pid = target_pid.0;
+
+            // Snapshot all healers warding this player. A healer wards a
+            // given player iff (in Heal stance) AND (in same instance) AND
+            // (effective ward — see `effective_ward_pid` — equals this
+            // player's PlayerId). Self-ward (healer's target is a Mob or
+            // they target themselves) is captured by the helper.
+            let mut working: Vec<(Entity, f32, f32, f32)> = intercessor_query
+                .iter()
+                .filter(|(_, healer_pid, combat, target, _, _, inst)| {
+                    combat.active_stance == Some(RoleStance::Heal)
+                        && matches!((target_inst_id, inst), (Some(t), Some(i)) if i.0 == t)
+                        && effective_ward_pid(*target, healer_pid.0) == Some(ward_pid)
+                })
+                .map(|(e, _, _, _, pool, arc, _)| (e, pool.amount, pool.invuln_until, arc.commit.mean()))
+                .collect();
+
+            // Per-healer (entity, absorbed) — drives pool write-back and
+            // attacker threat credit.
+            let mut absorbed_per_healer: Vec<(Entity, f32)> = Vec::new();
+
+            // Invuln short-circuit: any healer with an active invuln window
+            // absorbs the entire hit. First wins (single-credit).
+            for (h, _, invuln_until, _) in &working {
+                if now < *invuln_until {
+                    absorbed_per_healer.push((*h, final_dmg));
+                    final_dmg = 0.0;
+                    break;
+                }
+            }
+
+            // Sequential resolution: at each step pick the healer with the
+            // highest post-mitigation pool ("best-after"), apply their
+            // absorption against the remaining damage. The saturating curve
+            // bounds total absorption naturally — no global cap needed.
+            while final_dmg > 0.0 {
+                let mut best_idx: Option<usize> = None;
+                let mut best_post = f32::NEG_INFINITY;
+                for (i, (_, _, _, mean_q)) in working.iter().enumerate() {
+                    let cur_pool = working[i].1;
+                    if cur_pool <= 0.0 || *mean_q <= 0.0 { continue; }
+                    let want = desired_absorption(*mean_q, final_dmg);
+                    let absorbed = want.min(cur_pool);
+                    let post = cur_pool - absorbed;
+                    if post > best_post {
+                        best_post = post;
+                        best_idx = Some(i);
+                    }
+                }
+                let Some(idx) = best_idx else { break; };
+                let (healer, cur_pool, _, mean_q) = working[idx];
+                let want = desired_absorption(mean_q, final_dmg);
+                let absorbed = want.min(cur_pool);
+                if absorbed <= 0.0 { break; }
+                working[idx].1 = cur_pool - absorbed;
+                working[idx].3 = 0.0; // mark exhausted for this hit
+                final_dmg -= absorbed;
+                absorbed_per_healer.push((healer, absorbed));
+            }
+
             health.current = (health.current - final_dmg).max(0.0);
+
+            // Disruption fires only on the unmitigated portion. Scale the
+            // attack's profile magnitude by `final_dmg / resolved_dmg` so a
+            // hit that's 100% mitigated produces zero disruption and a
+            // hit that's 25% mitigated produces 75% of full disruption.
+            // Skipped when there's no profile attached or no damage made it
+            // through (no rhythm interruption when the absorption was total).
+            if let Some(profile) = ev.disruption {
+                if resolved_dmg > 0.0 && final_dmg > 0.0 {
+                    let ratio = (final_dmg / resolved_dmg).clamp(0.0, 1.0);
+                    let scaled_mag = profile.magnitude * ratio;
+                    if scaled_mag > 0.0 {
+                        disruption_writer.write(DisruptionEvent {
+                            target: ev.target,
+                            profile: DisruptionProfile {
+                                kind: profile.kind,
+                                magnitude: scaled_mag,
+                            },
+                        });
+                    }
+                }
+            }
 
             debug!(
                 "[DMG] E->P {:?}->{:?} ty={:?} base={:.1} resist={:.2} final={:.1} hp={:.1}/{:.1}",
                 ev.attacker, ev.target, ev.ty, ev.base, r, final_dmg, health.current, health.max,
             );
 
+            // Resolve each blocker to a display name for the combat log.
+            // Folds duplicate healer entries (e.g. invuln + drain on the same
+            // hit) into a single `(name, total)` pair so the line reads
+            // cleanly with one entry per healer.
+            let mut blocks: Vec<(String, f32)> = Vec::new();
+            for (healer, amount) in &absorbed_per_healer {
+                if *amount <= 0.0 { continue; }
+                let name = display_name(*healer, &player_name_query, &enemy_name_query);
+                if let Some(existing) = blocks.iter_mut().find(|(n, _)| n == &name) {
+                    existing.1 += amount;
+                } else {
+                    blocks.push((name, *amount));
+                }
+            }
+
             broadcast_combat_log(
                 ev.attacker, ev.target, final_dmg, ev.ty, ev.is_crit, false,
+                blocks, false,
                 &player_name_query, &enemy_name_query, &group_query, &mut log_senders,
             );
+
+            // Write back drained pool amounts.
+            for &(healer, new_amount, _, _) in &working {
+                if let Ok((_, _, _, _, mut pool, _, _)) = intercessor_query.get_mut(healer) {
+                    pool.amount = new_amount;
+                }
+            }
+
+            // Credit prevention threat: only the specific attacker mob, no
+            // fan-out. Fold equal-healer entries (e.g. invuln + drain on the
+            // same hit) to a single add.
+            if !absorbed_per_healer.is_empty() {
+                if let Ok((_, _, mut threat, _)) = enemy_targets.get_mut(ev.attacker) {
+                    for (healer, prevented) in &absorbed_per_healer {
+                        if *prevented > 0.0 {
+                            add_threat(&mut threat, *healer, HEAL_THREAT_PER_HP * prevented);
+                        }
+                    }
+                }
+            }
             continue;
         }
 
@@ -746,7 +1020,8 @@ fn display_name(
 /// attacker's or the target's group. Enemies have no `GroupId`, so an
 /// enemy-attacker / enemy-target contributes nothing from its own side — but
 /// as long as the *other* side is a player, that side's whole party receives
-/// the log entry.
+/// the log entry. `blocks` carries per-healer mitigation amounts for the
+/// hit; pass an empty slice when nothing was mitigated.
 fn broadcast_combat_log(
     attacker: Entity,
     target: Entity,
@@ -754,6 +1029,8 @@ fn broadcast_combat_log(
     ty: DamageType,
     is_crit: bool,
     attacker_is_player: bool,
+    blocks: Vec<(String, f32)>,
+    is_heal: bool,
     player_names: &Query<&PlayerName>,
     enemy_names: &Query<&EnemyName>,
     groups: &Query<&GroupId>,
@@ -770,6 +1047,8 @@ fn broadcast_combat_log(
         ty,
         is_crit,
         attacker_is_player,
+        blocks,
+        is_heal,
     };
 
     for (link, mut sender) in senders.iter_mut() {
@@ -974,7 +1253,7 @@ pub fn distribute_healing_threat(
     healer: Entity,
     heal_amount: f32,
     instance_id: u32,
-    mob_query: &mut Query<(&mut ThreatList, &InstanceId)>,
+    mob_query: &mut Query<(&mut ThreatList, &InstanceId), With<EnemyMarker>>,
 ) {
     let generated = heal_amount * 0.4;
     for (mut threat_list, mob_iid) in mob_query.iter_mut() {
@@ -982,6 +1261,213 @@ pub fn distribute_healing_threat(
             continue;
         }
         add_threat(&mut threat_list, healer, generated);
+    }
+}
+
+// ── Mitigation systems ────────────────────────────────────────────────────────
+
+/// Resolves Intercessor mitigation commits emitted by `process_player_inputs`.
+/// For each event: looks up the ward, performs range/facing/in-combat checks,
+/// fills the healer's `MitigationPool`, rolls crit (using the existing
+/// `crit_chance` curve), applies a small heal on crit, and bumps the
+/// `CritStreak` counter (granting an invuln window when it crosses
+/// `CRIT_STREAK_INVULN`).
+///
+/// Assumes Intercessors have `MitigationPool` and `CritStreak` attached at
+/// spawn (see `connection.rs`); a missing-components branch logs and skips.
+pub fn apply_mitigation_commits(
+    time: Res<Time>,
+    mut events: MessageReader<MitigationCommitEvent>,
+    mut friendly_query: Query<
+        (Entity, &PlayerId, &PlayerPosition, &mut Health, Option<&InstanceId>),
+        (With<PlayerId>, Without<Dead>),
+    >,
+    mut healer_state_query: Query<
+        (&mut MitigationPool, &mut CritStreak),
+        With<PlayerId>,
+    >,
+    mut mob_threat_query: Query<(&mut ThreatList, &InstanceId), With<EnemyMarker>>,
+    player_name_query: Query<&PlayerName>,
+    enemy_name_query: Query<&EnemyName>,
+    group_query: Query<&GroupId>,
+    mut log_senders: Query<(&PlayerEntityLink, &mut MessageSender<CombatLogMsg>)>,
+    mut heal_number_senders: Query<(&PlayerEntityLink, &mut MessageSender<HealNumberMsg>)>,
+) {
+    let now = time.elapsed_secs();
+    for ev in events.read() {
+        // Resolve the ward by PlayerId.
+        let ward_lookup = friendly_query.iter()
+            .find(|(_, pid, _, _, _)| pid.0 == ev.ward_player_id)
+            .map(|(e, _, pos, _, inst)| (e, pos.to_vec3(), inst.map(|i| i.0)));
+        let Some((ward_entity, ward_pos, ward_inst)) = ward_lookup else {
+            debug!("[MIT] healer {:?} ward player_id {} not found", ev.healer, ev.ward_player_id);
+            continue;
+        };
+
+        // Range check (XZ).
+        let healer_xz = Vec3::new(ev.healer_pos.x, 0.0, ev.healer_pos.z);
+        let ward_xz   = Vec3::new(ward_pos.x,     0.0, ward_pos.z);
+        let delta = ward_xz - healer_xz;
+        let dist = delta.length();
+        if dist > MELEE_RANGE {
+            debug!("[MIT] out of range — dist={dist:.2}");
+            continue;
+        }
+
+        // Facing check (270° cone). Skip when self-targeting (delta is zero).
+        if dist > 1e-3 {
+            let to_ward = delta.normalize_or_zero();
+            let forward = Quat::from_rotation_y(ev.healer_facing_yaw) * Vec3::NEG_Z;
+            let dot = forward.dot(to_ward);
+            if dot < FACING_COS_MIN_HEAL {
+                debug!("[MIT] not facing ward — dot={dot:.2} min={FACING_COS_MIN_HEAL}");
+                continue;
+            }
+        }
+
+        // In-combat check on the ward: any mob in the ward's instance has the
+        // ward on its threat list.
+        let Some(ward_inst) = ward_inst else { continue };
+        let in_combat = mob_threat_query.iter()
+            .any(|(threat, inst)| inst.0 == ward_inst
+                && threat.entries.iter().any(|e| e.player_entity == ward_entity));
+        if !in_combat {
+            debug!("[MIT] ward not in combat");
+            continue;
+        }
+
+        // Crit roll.
+        let is_crit = next_unit() < crit_chance(ev.quality);
+
+        // Crit heal: apply directly to the ward's Health, credit threat for
+        // the applied portion, and broadcast log + floating-number cues.
+        // We surface the full `CRIT_HEAL_AMOUNT` regardless of overheal so
+        // the visual feedback is consistent — even healing a full-HP ward
+        // pops a number so the healer can see their crit landed.
+        if is_crit {
+            let mut ward_was_alive = false;
+            if let Ok((_, _, _, mut health, _)) = friendly_query.get_mut(ward_entity) {
+                if health.is_alive() {
+                    ward_was_alive = true;
+                    let new = (health.current + CRIT_HEAL_AMOUNT).min(health.max);
+                    let applied = new - health.current;
+                    health.current = new;
+                    if applied > 0.0 {
+                        distribute_healing_threat(ev.healer, applied, ward_inst, &mut mob_threat_query);
+                    }
+                }
+            }
+            if ward_was_alive {
+                broadcast_combat_log(
+                    ev.healer, ward_entity, CRIT_HEAL_AMOUNT,
+                    DamageType::Physical, true, true,
+                    Vec::new(), true,
+                    &player_name_query, &enemy_name_query, &group_query, &mut log_senders,
+                );
+                // Heal number: cue both the healer and the ward.
+                let payload = HealNumberMsg {
+                    target: ward_entity,
+                    amount: CRIT_HEAL_AMOUNT,
+                    is_crit: true,
+                };
+                for (link, mut sender) in heal_number_senders.iter_mut() {
+                    if link.0 == ev.healer || link.0 == ward_entity {
+                        sender.send::<GameChannel>(payload.clone());
+                    }
+                }
+            }
+        }
+
+        // Healer-side state: streak update + pool fill. MitigationPool and
+        // CritStreak are inserted at spawn for Intercessors (connection.rs);
+        // a miss here means the spawn path drifted out of sync.
+        let Ok((mut pool, mut streak)) = healer_state_query.get_mut(ev.healer) else {
+            warn!("[MIT] healer {:?} missing MitigationPool/CritStreak", ev.healer);
+            continue;
+        };
+
+        // Streak: reset on ward change; on non-crit; bump and possibly
+        // trigger invuln on crit.
+        if streak.last_ward != Some(ev.ward_player_id) {
+            streak.count = 0;
+            streak.last_ward = Some(ev.ward_player_id);
+        }
+        let mut trigger_invuln = false;
+        if is_crit {
+            streak.count = streak.count.saturating_add(1);
+            if streak.count >= CRIT_STREAK_INVULN {
+                trigger_invuln = true;
+                streak.count = 0;
+            }
+        } else {
+            streak.count = 0;
+        }
+
+        // Pool: bump amount, set invuln window if streak fired.
+        pool.amount += BASE_MITIGATION * ev.quality;
+        if trigger_invuln {
+            pool.invuln_until = now + INVULN_DURATION_SECS;
+        }
+    }
+}
+
+/// Mirrors the server-side `MitigationPool` into the replicated
+/// `ReplicatedMitigationPool` so clients can render the pool. Writes only
+/// when a field actually changes — Lightyear's change-detection skips
+/// network sends for unchanged components, but avoiding the spurious mark
+/// keeps the dirty flag honest for any future watchers.
+pub fn sync_replicated_mitigation_pool(
+    time: Res<Time>,
+    mut query: Query<(&MitigationPool, &mut ReplicatedMitigationPool)>,
+) {
+    let now = time.elapsed_secs();
+    for (pool, mut replicated) in query.iter_mut() {
+        let invuln = now < pool.invuln_until;
+        if (replicated.amount - pool.amount).abs() > f32::EPSILON {
+            replicated.amount = pool.amount;
+        }
+        if replicated.invuln_active != invuln {
+            replicated.invuln_active = invuln;
+        }
+    }
+}
+
+/// Per-tick maintenance of mitigation pools and crit streaks.
+/// - When the **healer** has no threat on any mob in their instance (i.e.
+///   no mob has the healer on its `ThreatList`), the pool bleeds at
+///   `OOC_DECAY_PER_SEC` and the crit streak resets.
+/// - Otherwise both are left alone.
+///
+/// The healer's own threat presence — not the ward's — is what counts. As
+/// long as something is engaged with the healer (mitigation credits threat
+/// onto attackers, so the healer naturally stays on threat lists during
+/// active mitigation), the pool persists.
+pub fn tick_mitigation_decay(
+    time: Res<Time>,
+    mob_threat_query: Query<(&ThreatList, &InstanceId), With<EnemyMarker>>,
+    mut healer_query: Query<
+        (Entity, Option<&InstanceId>, &mut MitigationPool, &mut CritStreak),
+        With<PlayerId>,
+    >,
+) {
+    let dt = time.delta_secs();
+    for (healer_entity, healer_inst, mut pool, mut streak) in healer_query.iter_mut() {
+        let in_combat = match healer_inst {
+            Some(inst) => mob_threat_query.iter().any(|(threat, mi)| {
+                mi.0 == inst.0
+                    && threat.entries.iter().any(|e| e.player_entity == healer_entity)
+            }),
+            None => false,
+        };
+
+        if !in_combat {
+            if pool.amount > 0.0 {
+                pool.amount = (pool.amount - OOC_DECAY_PER_SEC * dt).max(0.0);
+            }
+            if streak.count != 0 {
+                streak.count = 0;
+            }
+        }
     }
 }
 
@@ -1008,6 +1494,7 @@ mod tests {
             multipliers,
             quality,
             is_crit: false,
+            disruption: None,
         }
     }
 
@@ -1131,5 +1618,79 @@ mod tests {
         apply_damage_threat(&mut list, attacker, 50.0, &mods);
         assert_eq!(list.entries.len(), 1);
         assert_eq!(list.entries[0].threat, 100.0); // 50 × 2.0
+    }
+
+    // ── desired_absorption (saturating mitigation curve) ────────────────────
+
+    #[test]
+    fn desired_absorption_zero_for_zero_quality() {
+        assert_eq!(desired_absorption(0.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn desired_absorption_zero_for_zero_incoming() {
+        assert_eq!(desired_absorption(1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn desired_absorption_strictly_below_incoming() {
+        // The curve must never absorb the full hit — even at perfect quality
+        // and tiny incoming, the limit fraction is SCALE/KNEE = 0.85.
+        for &incoming in &[0.5_f32, 1.0, 5.0, 30.0, 100.0, 1000.0, 10_000.0] {
+            for &q in &[0.1_f32, 0.5, 0.85, 1.0] {
+                let absorbed = desired_absorption(q, incoming);
+                assert!(
+                    absorbed < incoming,
+                    "absorbed {absorbed} must be < incoming {incoming} at q={q}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn desired_absorption_saturates_at_large_incoming() {
+        // For very large hits, absorbed → mean_q * SATURATION_SCALE.
+        let cap_at_perfect = 1.0 * SATURATION_SCALE;
+        let big = desired_absorption(1.0, 1_000_000.0);
+        assert!(
+            (big - cap_at_perfect).abs() < 0.01,
+            "expected saturation near {cap_at_perfect}, got {big}",
+        );
+    }
+
+    #[test]
+    fn desired_absorption_approaches_max_frac_at_small_incoming() {
+        // As incoming → 0, fraction → mean_q * SCALE/KNEE = mean_q * 0.85.
+        let max_frac = SATURATION_SCALE / SATURATION_KNEE;
+        let tiny = 1e-3;
+        let absorbed = desired_absorption(1.0, tiny);
+        let frac = absorbed / tiny;
+        assert!(
+            (frac - max_frac).abs() < 1e-3,
+            "expected fraction near {max_frac}, got {frac}",
+        );
+    }
+
+    #[test]
+    fn desired_absorption_scales_linearly_with_quality() {
+        let incoming = 100.0;
+        let half = desired_absorption(0.5, incoming);
+        let full = desired_absorption(1.0, incoming);
+        assert!(
+            (half * 2.0 - full).abs() < 1e-4,
+            "linear in quality: 2 × {half} should equal {full}",
+        );
+    }
+
+    #[test]
+    fn desired_absorption_concave_in_incoming() {
+        // Diminishing returns: doubling incoming should less than double absorbed.
+        let q = 1.0;
+        let small = desired_absorption(q, 10.0);
+        let big = desired_absorption(q, 20.0);
+        assert!(
+            big < 2.0 * small,
+            "diminishing returns: 2x incoming should yield <2x absorbed (small={small} big={big})",
+        );
     }
 }

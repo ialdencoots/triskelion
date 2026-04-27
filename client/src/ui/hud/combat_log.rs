@@ -382,6 +382,12 @@ fn damage_color(ty: DamageType) -> Color {
     }
 }
 
+/// Body-text color for a heal log line. Soft green so it reads as friendly
+/// without competing with the damage palette.
+const HEAL_SENTENCE_COLOR: Color = Color::srgb(0.78, 0.95, 0.82);
+/// Saturated color for the heal number itself.
+const HEAL_NUMBER_COLOR: Color = Color::srgb(0.40, 1.00, 0.55);
+
 // ── Receive + render ────────────────────────────────────────────────────────
 
 /// Consume every queued `CombatLogMsg` and append a new row. Each row is a
@@ -400,10 +406,30 @@ pub fn receive_combat_log_msgs(
     for msg in receiver.receive() {
         let amount = msg.amount.round().max(0.0) as i32;
         let crit_mark = if msg.is_crit { "!" } else { "" };
-        let sentence = format!("{} hits {} for ", msg.attacker_name, msg.target_name);
+        let (sentence, sent_color, num_color) = if msg.is_heal {
+            (
+                format!("{} heals {} for ", msg.attacker_name, msg.target_name),
+                HEAL_SENTENCE_COLOR,
+                HEAL_NUMBER_COLOR,
+            )
+        } else {
+            (
+                format!("{} hits {} for ", msg.attacker_name, msg.target_name),
+                sentence_color(msg.ty, msg.attacker_is_player),
+                damage_color(msg.ty),
+            )
+        };
         let number = format!("{amount}{crit_mark}");
-        let sent_color = sentence_color(msg.ty, msg.attacker_is_player);
-        let num_color = damage_color(msg.ty);
+
+        // "(B blocked Y, B2 blocked Y2)" appendix when the hit was mitigated.
+        let blocks_aside = if msg.blocks.is_empty() {
+            String::new()
+        } else {
+            let parts: Vec<String> = msg.blocks.iter()
+                .map(|(name, amt)| format!("{} blocked {}", name, amt.round().max(0.0) as i32))
+                .collect();
+            format!(" ({})", parts.join(", "))
+        };
 
         let row = commands
             .spawn((
@@ -421,6 +447,18 @@ pub fn receive_combat_log_msgs(
             ))
             .id();
         commands.entity(row).add_child(number_span);
+        if !blocks_aside.is_empty() {
+            // Aside in the same color as the sentence so it reads as context,
+            // not as another damage number.
+            let aside_span = commands
+                .spawn((
+                    TextSpan::new(blocks_aside),
+                    TextFont { font_size: ENTRY_FONT_SIZE, ..default() },
+                    TextColor(sent_color),
+                ))
+                .id();
+            commands.entity(row).add_child(aside_span);
+        }
         commands.entity(entries_entity).add_child(row);
     }
 }

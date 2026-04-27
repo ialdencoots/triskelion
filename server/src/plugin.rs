@@ -5,6 +5,7 @@ use lightyear::prelude::server::*;
 use shared::settings;
 
 use crate::systems::{chat, combat, connection, enemy, instances::InstanceRegistry, instances, minigame};
+use crate::systems::combat::MitigationCommitEvent;
 #[cfg(debug_assertions)]
 use crate::systems::dev_dots;
 
@@ -13,6 +14,9 @@ pub struct ServerGamePlugin;
 impl Plugin for ServerGamePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InstanceRegistry>();
+        // Server-local message: produced by process_player_inputs when an
+        // Intercessor in Heal stance commits, consumed by apply_mitigation_commits.
+        app.add_message::<MitigationCommitEvent>();
         app.add_systems(Startup, start_listening);
         app.add_observer(enemy::on_server_started);
         app.add_observer(debug_server_linked);
@@ -44,6 +48,12 @@ impl Plugin for ServerGamePlugin {
                 enemy::tick_enemy_walk,
                 (
                     combat::process_player_inputs,
+                    // Intercessor mitigation commits are routed via
+                    // MitigationCommitEvent emitted by process_player_inputs
+                    // and resolved here — must run before apply_damage_events
+                    // so the same-tick pool fill is visible when an enemy hit
+                    // arrives in the same tick.
+                    combat::apply_mitigation_commits,
                     combat::tick_dots,
                     // tick_enemy_casts runs before tick_enemy_abilities so
                     // resolving a cast this tick doesn't prevent the mob
@@ -60,6 +70,15 @@ impl Plugin for ServerGamePlugin {
                     // the tick's final HP, not last tick's value.
                     combat::apply_death_transition,
                 ).chain(),
+                // Out-of-combat decay of mitigation pools and crit-streak
+                // resets. Doesn't need to be ordered against the damage
+                // chain — the data it touches is decoupled from same-tick
+                // damage flow.
+                combat::tick_mitigation_decay,
+                // Replicated mirror — must run after the damage chain so the
+                // post-drain pool amount is what gets sent to clients.
+                combat::sync_replicated_mitigation_pool
+                    .after(combat::apply_damage_events),
                 combat::process_target_selections,
                 combat::tick_ability_cooldowns,
                 // Stance multipliers must update before sync so threat display

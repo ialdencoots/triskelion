@@ -11,6 +11,17 @@ pub struct ReplicatedThreatList {
     pub entries: Vec<(u64, f32)>,
 }
 
+/// Replicated mirror of the server-side `MitigationPool` for healers.
+/// Synced each tick by `sync_replicated_mitigation_pool` so clients can show
+/// the pool fill, drain, and invuln state in the HUD without depending on
+/// server-only types. `invuln_active` is a boolean computed server-side from
+/// the `now < invuln_until` check, so the client doesn't need server time.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct ReplicatedMitigationPool {
+    pub amount: f32,
+    pub invuln_active: bool,
+}
+
 /// Hit points. Replicated server-to-client; interpolated for smooth display.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Health {
